@@ -1,0 +1,267 @@
+#!/usr/bin/env bash
+# revive — deterministic context brief for Claude Code
+# https://github.com/justi/context-revive
+set -euo pipefail
+
+VERSION="0.1.0"
+STATIC_FILE=".revive/static.md"
+BRIEF_CHAR_BUDGET=1500
+
+LOG_DIR="${HOME}/.context-revive"
+LOG_FILE="${LOG_DIR}/hook.log"
+
+COUNTER_FILE=".claude/revive-counter"
+REFRESH_EVERY="${REVIVE_REFRESH_EVERY:-5}"
+REFRESH_TIME_GAP="${REVIVE_REFRESH_TIME_GAP:-600}"  # seconds
+
+usage() {
+  cat <<'EOF'
+Usage: revive <command> [options]
+
+Commands:
+  init              Generate .revive/static.md (PURPOSE, INVARIANTS, GOTCHAS)
+  show              Print the brief that would be injected (force-emit)
+  refresh           Hook entry point — cadence-gated, silent on failure
+  install-hook      Wire UserPromptSubmit into .claude/settings.json
+                    (use --global for ~/.claude/settings.json)
+  version           Print version
+EOF
+}
+
+cmd_version() { echo "revive $VERSION"; }
+
+# --- logging ----------------------------------------------------------------
+
+log() {
+  mkdir -p "$LOG_DIR" 2>/dev/null || return 0
+  printf '[%s] %s\n' "$(date '+%Y-%m-%dT%H:%M:%S')" "$*" \
+    >> "$LOG_FILE" 2>/dev/null || true
+}
+
+# --- DYNAMIC section builders -----------------------------------------------
+
+dyn_state() {
+  local branch
+  if branch=$(git symbolic-ref --short HEAD 2>/dev/null); then
+    echo "STATE: branch=${branch}"
+    git log --oneline -3 2>/dev/null | sed 's/^/  /' || true
+  elif git rev-parse --git-dir >/dev/null 2>&1; then
+    echo "STATE: (git repo, no commits yet)"
+  else
+    echo "STATE: (not a git repo)"
+  fi
+}
+
+dyn_todo() {
+  local f
+  for f in plan.md PLAN.md TODO.md todo.md TODO ROADMAP.md; do
+    if [[ -f "$f" ]]; then
+      echo "TODO: (from $f)"
+      grep -vE '^\s*(#|$)' "$f" | head -3 | sed 's/^/  /'
+      return
+    fi
+  done
+  echo "TODO: (no plan.md/TODO.md found)"
+}
+
+dyn_modules() {
+  echo "MODULES:"
+  {
+    ls -1 main.py app.py cli.py manage.py run.py 2>/dev/null || true
+    ls -1 index.js index.ts main.ts server.js server.ts 2>/dev/null || true
+    ls -1 main.go main.rs Cargo.toml package.json 2>/dev/null || true
+    ls -1 Gemfile config.ru 2>/dev/null || true
+    ls -1 bin/* 2>/dev/null || true
+    ls -1 src/*/__init__.py src/*/cli.py 2>/dev/null || true
+  } | awk '!seen[$0]++' | head -10 | sed 's/^/  /'
+}
+
+# --- STATIC section ---------------------------------------------------------
+
+static_section() {
+  if [[ -f "$STATIC_FILE" ]]; then
+    cat "$STATIC_FILE"
+  else
+    cat <<EOF
+PURPOSE: (run \`revive init\` to scaffold $STATIC_FILE)
+INVARIANTS: (none defined)
+GOTCHAS: (none defined)
+EOF
+  fi
+}
+
+# --- brief assembler --------------------------------------------------------
+
+build_brief() {
+  local refresh_n="${1:-0}"
+  printf '<revive refresh="%s">\n' "$refresh_n"
+  echo "# STATIC"
+  static_section
+  echo
+  echo "# DYNAMIC"
+  dyn_state
+  dyn_todo
+  dyn_modules
+  echo "</revive>"
+}
+
+# --- cadence ----------------------------------------------------------------
+
+# counter file format: "N:LAST_EMIT_EPOCH"
+read_counter() {
+  if [[ -f "$COUNTER_FILE" ]]; then
+    cat "$COUNTER_FILE" 2>/dev/null || echo "0:0"
+  else
+    echo "0:0"
+  fi
+}
+
+write_counter() {
+  mkdir -p "$(dirname "$COUNTER_FILE")" 2>/dev/null || return 0
+  printf '%s:%s\n' "$1" "$2" > "$COUNTER_FILE" 2>/dev/null || true
+}
+
+# returns 0 (emit) or 1 (skip); prints "n" on stdout when emitting
+cadence_gate() {
+  local state n last now gap
+  state=$(read_counter)
+  n="${state%%:*}"
+  last="${state##*:}"
+  [[ "$n" =~ ^[0-9]+$ ]] || n=0
+  [[ "$last" =~ ^[0-9]+$ ]] || last=0
+
+  now=$(date +%s)
+  n=$((n + 1))
+  gap=$((now - last))
+
+  local emit=0
+  if (( n == 1 )); then emit=1
+  elif (( n % REFRESH_EVERY == 0 )); then emit=1
+  elif (( gap > REFRESH_TIME_GAP )); then emit=1
+  fi
+
+  if (( emit )); then
+    write_counter "$n" "$now"
+    echo "$n"
+    return 0
+  else
+    write_counter "$n" "$last"
+    return 1
+  fi
+}
+
+# --- commands ---------------------------------------------------------------
+
+cmd_show() {
+  local brief
+  brief=$(build_brief "${REVIVE_REFRESH_N:-0}")
+  printf '%s\n' "$brief"
+  local len=${#brief}
+  printf '\n--- %d chars (budget: %d) ---\n' "$len" "$BRIEF_CHAR_BUDGET" >&2
+}
+
+# refresh is the hook hot path: NEVER fail the session, always exit 0
+cmd_refresh() {
+  mkdir -p "$LOG_DIR" 2>/dev/null || true
+  : >> "$LOG_FILE" 2>/dev/null || true
+  set +e
+  local n
+  n=$(cadence_gate 2>>"$LOG_FILE")
+  local gate_rc=$?
+  if (( gate_rc == 0 )); then
+    build_brief "$n" 2>>"$LOG_FILE" || log "build_brief failed"
+  fi
+  return 0
+}
+
+cmd_init() {
+  if [[ -e "$STATIC_FILE" ]]; then
+    echo "exists: $STATIC_FILE (not overwriting)" >&2
+    exit 1
+  fi
+  mkdir -p "$(dirname "$STATIC_FILE")"
+  local purpose="(describe this project in 1-3 sentences)"
+  if [[ -f README.md ]]; then
+    local extracted
+    extracted=$(grep -vE '^\s*(#|>|```|$)' README.md | head -2 \
+      | tr '\n' ' ' | sed 's/  */ /g;s/^ //;s/ $//')
+    [[ -n "$extracted" ]] && purpose="$extracted"
+  fi
+  cat > "$STATIC_FILE" <<EOF
+PURPOSE: ${purpose}
+INVARIANTS:
+  - (top-5 architectural rules; edit this file)
+GOTCHAS:
+  - (landmines you keep stepping on; edit this file)
+EOF
+  echo "created: $STATIC_FILE"
+}
+
+cmd_install_hook() {
+  local scope="${1:-}" settings_path=".claude/settings.json"
+  if [[ "$scope" == "--global" ]]; then
+    settings_path="$HOME/.claude/settings.json"
+  fi
+
+  local revive_bin
+  revive_bin=$(command -v revive 2>/dev/null || echo "$HOME/.local/bin/revive")
+  local cmd_line="$revive_bin refresh"
+
+  mkdir -p "$(dirname "$settings_path")"
+  [[ -f "$settings_path" ]] || echo '{}' > "$settings_path"
+
+  if ! command -v jq >/dev/null 2>&1; then
+    cat >&2 <<EOF
+jq not found. Merge this into $settings_path manually:
+
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": "$cmd_line" }
+        ]
+      }
+    ]
+  }
+}
+EOF
+    exit 1
+  fi
+
+  if jq -e --arg cmd "$cmd_line" \
+    '[.hooks.UserPromptSubmit[]?.hooks[]? | select(.command == $cmd)] | length > 0' \
+    "$settings_path" >/dev/null 2>&1; then
+    echo "hook already installed in $settings_path"
+    return 0
+  fi
+
+  local tmp
+  tmp=$(mktemp)
+  jq --arg cmd "$cmd_line" '
+    .hooks = (.hooks // {})
+    | .hooks.UserPromptSubmit = (.hooks.UserPromptSubmit // [])
+    | .hooks.UserPromptSubmit += [{"hooks":[{"type":"command","command":$cmd}]}]
+  ' "$settings_path" > "$tmp"
+  mv "$tmp" "$settings_path"
+  echo "installed hook in $settings_path"
+}
+
+# --- main -------------------------------------------------------------------
+
+main() {
+  local cmd="${1:-}"
+  [[ -z "$cmd" ]] && { usage; exit 1; }
+  shift || true
+  case "$cmd" in
+    init)          cmd_init "$@" ;;
+    show)          cmd_show "$@" ;;
+    refresh)       cmd_refresh "$@" ;;
+    install-hook)  cmd_install_hook "$@" ;;
+    version|--version|-v) cmd_version ;;
+    help|--help|-h)       usage ;;
+    *) echo "unknown command: $cmd" >&2; usage; exit 1 ;;
+  esac
+}
+
+main "$@"

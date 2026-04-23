@@ -1,0 +1,49 @@
+# Architecture Decision Records — private during early development
+adr/
+
+# Claude Code local config and revive runtime state
+.claude/
+.revive/
+
+# Private development plan
+PLAN.md
+notes/
+.notes/
+TODO-private.md
+
+# Local workspace data
+*.db
+*.sqlite
+*.sqlite3
+cache/
+.cache/
+
+# Local workspace config
+.config/
+config.local.yaml
+config.yaml
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.settings/
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Logs
+*.log
+logs/
+
+# Environment variables / secrets
+.env
+.env.local
+.env.*.local
+secrets.yaml
+secrets.json
