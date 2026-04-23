@@ -64,16 +64,38 @@ dyn_todo() {
   echo "TODO: (no plan.md/TODO.md found)"
 }
 
-dyn_modules() {
-  echo "MODULES:"
-  {
-    ls -1 main.py app.py cli.py manage.py run.py 2>/dev/null || true
-    ls -1 index.js index.ts main.ts server.js server.ts 2>/dev/null || true
-    ls -1 main.go main.rs Cargo.toml package.json 2>/dev/null || true
-    ls -1 Gemfile config.ru 2>/dev/null || true
-    ls -1 bin/* 2>/dev/null || true
-    ls -1 src/*/__init__.py src/*/cli.py 2>/dev/null || true
-  } | awk '!seen[$0]++' | head -10 | sed 's/^/  /'
+dyn_hot_files() {
+  echo "HOT_FILES: (last 20 commits, last change shown)"
+  if ! git rev-parse --git-dir >/dev/null 2>&1; then
+    echo "  (not a git repo)"
+    return
+  fi
+  local total
+  total=$(git rev-list --count HEAD 2>/dev/null || echo 0)
+  if (( total == 0 )); then
+    echo "  (no history)"
+    return
+  fi
+
+  local files
+  files=$(git log --name-only --pretty=format: -20 2>/dev/null \
+    | grep -v '^$' \
+    | grep -vE '\.lock$|\.min\.(js|css)$|^(dist|build|node_modules|vendor)/' \
+    | sort | uniq -c | sort -rn | head -5)
+
+  if [[ -z "$files" ]]; then
+    echo "  (no files touched)"
+    return
+  fi
+
+  while IFS= read -r line; do
+    local count path msg
+    count=$(echo "$line" | awk '{print $1}')
+    path=$(echo "$line" | awk '{$1=""; sub(/^ /,""); print}')
+    printf '  %d× %s\n' "$count" "$path"
+    msg=$(git log -1 --pretty=%s -- "$path" 2>/dev/null)
+    [[ -n "$msg" ]] && printf '      └ "%s"\n' "$msg"
+  done <<<"$files"
 }
 
 # --- STATIC section ---------------------------------------------------------
@@ -101,7 +123,7 @@ build_brief() {
   echo "# DYNAMIC"
   dyn_state
   dyn_todo
-  dyn_modules
+  dyn_hot_files
   echo "</revive>"
 }
 
