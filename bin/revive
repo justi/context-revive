@@ -77,11 +77,14 @@ dyn_hot_files() {
     return
   fi
 
+  # `|| true` is load-bearing: under `set -euo pipefail`, a grep that filters
+  # every line returns 1 and would abort the whole brief (e.g. a run of
+  # lockfile-only commits).
   local files
   files=$(git log --name-only --pretty=format: -20 2>/dev/null \
     | grep -v '^$' \
-    | grep -vE '\.lock$|\.min\.(js|css)$|^(dist|build|node_modules|vendor)/' \
-    | sort | uniq -c | sort -rn | head -5)
+    | grep -vE '(^|/)(package-lock\.json|pnpm-lock\.yaml)$|\.lock$|\.min\.(js|css)$|^(dist|build|node_modules|vendor)/' \
+    | sort | uniq -c | sort -rn | head -5 || true)
 
   if [[ -z "$files" ]]; then
     echo "  (no files touched)"

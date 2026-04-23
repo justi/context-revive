@@ -83,6 +83,55 @@ teardown() {
   [[ "$output" != *"vendor/ignored.rb"* ]]
 }
 
+@test "hot_files filters package-lock.json (JS ecosystem)" {
+  echo '{}' > package-lock.json
+  git add package-lock.json
+  git commit -qm "bump package-lock"
+  echo 'console.log(1)' > src.js
+  git add src.js
+  git commit -qm "add src.js"
+  run "$REVIVE" show
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"src.js"* ]]
+  [[ "$output" != *"package-lock.json"* ]]
+}
+
+@test "hot_files filters pnpm-lock.yaml (JS ecosystem)" {
+  echo 'lockfile: 5' > pnpm-lock.yaml
+  git add pnpm-lock.yaml
+  git commit -qm "bump pnpm"
+  echo 'x' > app.ts
+  git add app.ts
+  git commit -qm "add app.ts"
+  run "$REVIVE" show
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"app.ts"* ]]
+  [[ "$output" != *"pnpm-lock.yaml"* ]]
+}
+
+# Codex P1: pipeline under set -euo pipefail must not abort when all recent
+# commits touch only filtered paths.
+@test "hot_files does not abort when all recent history is filtered noise" {
+  echo '{}' > package-lock.json
+  git add package-lock.json
+  git commit -qm "lockfile only 1"
+  echo '{"v":2}' > package-lock.json
+  git add package-lock.json
+  git commit -qm "lockfile only 2"
+  run "$REVIVE" show
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"HOT_FILES:"* ]]
+  [[ "$output" == *"no files touched"* ]]
+}
+
+@test "refresh stays silent-failure safe when history is filter-only" {
+  echo '{}' > yarn.lock
+  git add yarn.lock
+  git commit -qm "lock"
+  run "$REVIVE" refresh
+  [ "$status" -eq 0 ]
+}
+
 @test "hot_files reports no-history when repo is empty" {
   # nuke initial commit to get a genuinely empty repo
   rm -rf .git
