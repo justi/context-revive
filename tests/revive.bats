@@ -7,7 +7,9 @@ setup() {
   rm -rf "$WORKDIR"
   mkdir -p "$WORKDIR"
   cd "$WORKDIR"
-  git init -q
+  # -b main: pin default branch name for portability across hosts whose
+  # init.defaultBranch may be `master` or something else.
+  git init -q -b main
   git config user.email test@example.com
   git config user.name test
   git commit -q --allow-empty -m "initial commit"
@@ -55,7 +57,205 @@ teardown() {
   [[ "$output" == *"# DYNAMIC"* ]]
   [[ "$output" == *"STATE:"* ]]
   [[ "$output" == *"TODO:"* ]]
-  [[ "$output" == *"MODULES:"* ]]
+  [[ "$output" == *"HOT_FILES:"* ]]
+}
+
+@test "hot_files shows N× count prefix and last commit msg" {
+  echo "hello" > a.rb
+  git add a.rb
+  git commit -qm "add a.rb"
+  echo "world" >> a.rb
+  git add a.rb
+  git commit -qm "update a.rb"
+  run "$REVIVE" show
+  [[ "$output" == *"× a.rb"* ]]
+  [[ "$output" == *"update a.rb"* ]]
+}
+
+@test "hot_files filters lock and vendor noise" {
+  mkdir -p vendor
+  echo x > package-lock.json
+  echo y > vendor/ignored.rb
+  echo z > real.rb
+  git add .
+  git commit -qm "mixed commit"
+  run "$REVIVE" show
+  [[ "$output" == *"real.rb"* ]]
+  [[ "$output" != *"package-lock.json"* ]]
+  [[ "$output" != *"vendor/ignored.rb"* ]]
+}
+
+@test "hot_files filters package-lock.json (JS ecosystem)" {
+  echo '{}' > package-lock.json
+  git add package-lock.json
+  git commit -qm "bump package-lock"
+  echo 'console.log(1)' > src.js
+  git add src.js
+  git commit -qm "add src.js"
+  run "$REVIVE" show
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"src.js"* ]]
+  [[ "$output" != *"package-lock.json"* ]]
+}
+
+@test "hot_files filters pnpm-lock.yaml (JS ecosystem)" {
+  echo 'lockfile: 5' > pnpm-lock.yaml
+  git add pnpm-lock.yaml
+  git commit -qm "bump pnpm"
+  echo 'x' > app.ts
+  git add app.ts
+  git commit -qm "add app.ts"
+  run "$REVIVE" show
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"app.ts"* ]]
+  [[ "$output" != *"pnpm-lock.yaml"* ]]
+}
+
+# Codex P1: pipeline under set -euo pipefail must not abort when all recent
+# commits touch only filtered paths.
+@test "hot_files does not abort when all recent history is filtered noise" {
+  echo '{}' > package-lock.json
+  git add package-lock.json
+  git commit -qm "lockfile only 1"
+  echo '{"v":2}' > package-lock.json
+  git add package-lock.json
+  git commit -qm "lockfile only 2"
+  run "$REVIVE" show
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"HOT_FILES:"* ]]
+  [[ "$output" == *"no files touched"* ]]
+}
+
+@test "refresh stays silent-failure safe when history is filter-only" {
+  echo '{}' > yarn.lock
+  git add yarn.lock
+  git commit -qm "lock"
+  run "$REVIVE" refresh
+  [ "$status" -eq 0 ]
+}
+
+@test "hot_files reports no-history when repo is empty" {
+  # nuke initial commit to get a genuinely empty repo
+  rm -rf .git
+  git init -q -b main
+  git config user.email test@example.com
+  git config user.name test
+  run "$REVIVE" show
+  [[ "$output" == *"HOT_FILES:"* ]]
+  [[ "$output" == *"no history"* ]]
+}
+
+@test "hot_files ranks by frequency (most-touched first)" {
+  for i in 1 2 3 4; do
+    echo "$i" > frequent.rb
+    git add frequent.rb
+    git commit -qm "touch frequent #$i"
+  done
+  echo x > rare.rb
+  git add rare.rb
+  git commit -qm "add rare once"
+  run "$REVIVE" show
+  # frequent.rb must appear before rare.rb in output
+  local fpos rpos
+  fpos=$(echo "$output" | grep -n 'frequent.rb' | head -1 | cut -d: -f1)
+  rpos=$(echo "$output" | grep -n 'rare.rb' | head -1 | cut -d: -f1)
+  [ -n "$fpos" ] && [ -n "$rpos" ]
+  [ "$fpos" -lt "$rpos" ]
+}
+
+@test "hot_files caps window at 20 commits" {
+  for i in $(seq 1 25); do
+    echo "$i" > loop.rb
+    git add loop.rb
+    git commit -qm "commit $i"
+  done
+  run "$REVIVE" show
+  # extract the count prefix for loop.rb — must be <= 20
+  local count
+  count=$(echo "$output" | awk '/× loop.rb$/ {gsub(/×/,""); print $1; exit}')
+  [ -n "$count" ]
+  [ "$count" -le 20 ]
+}
+
+@test "hot_files handles deleted files" {
+  echo tmp > gone.rb
+  git add gone.rb
+  git commit -qm "add gone.rb"
+  git rm -q gone.rb
+  git commit -qm "remove gone.rb"
+  run "$REVIVE" show
+  [[ "$output" == *"gone.rb"* ]]
+  [[ "$output" == *"remove gone.rb"* ]]
+}
+
+@test "hot_files handles paths with spaces" {
+  echo foo > "my file.rb"
+  git add "my file.rb"
+  git commit -qm "add spaced file"
+  echo bar >> "my file.rb"
+  git add "my file.rb"
+  git commit -qm "update spaced file"
+  run "$REVIVE" show
+  [[ "$output" == *"my file.rb"* ]]
+}
+
+@test "hot_files handles deeply nested paths" {
+  mkdir -p a/b/c/d/e
+  echo deep > a/b/c/d/e/leaf.rb
+  git add a/b/c/d/e/leaf.rb
+  git commit -qm "add deep"
+  run "$REVIVE" show
+  [[ "$output" == *"a/b/c/d/e/leaf.rb"* ]]
+}
+
+@test "hot_files survives commit messages with quotes and special chars" {
+  echo x > weird.rb
+  git add weird.rb
+  git commit -qm 'fix: handle "quoted" input & $edge cases'
+  run "$REVIVE" show
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"weird.rb"* ]]
+  [[ "$output" == *"quoted"* ]]
+}
+
+@test "hot_files ignores merge commits' lack of file list" {
+  # create a divergent branch and merge — merges have no files by default
+  echo main-work > main.rb
+  git add main.rb
+  git commit -qm "main work"
+  git checkout -qb feature
+  echo feature-work > feat.rb
+  git add feat.rb
+  git commit -qm "feature work"
+  git checkout -q main
+  git merge -q --no-ff feature -m "merge feature"
+  run "$REVIVE" show
+  [ "$status" -eq 0 ]
+  # both files should appear (from their own commits, not the merge)
+  [[ "$output" == *"main.rb"* ]]
+  [[ "$output" == *"feat.rb"* ]]
+}
+
+@test "hot_files limits output to top 5 files" {
+  for f in one two three four five six seven; do
+    echo x > "$f.rb"
+    git add "$f.rb"
+    git commit -qm "add $f"
+  done
+  run "$REVIVE" show
+  local count
+  count=$(echo "$output" | grep -cE '^\s+[0-9]+×\s')
+  [ "$count" -le 5 ]
+}
+
+@test "brief stays under 1500 chars even with rich history" {
+  for i in $(seq 1 15); do
+    echo "$i" > "file$i.rb"
+    git add "file$i.rb"
+    git commit -qm "add file$i with a reasonably descriptive commit message"
+  done
+  run "$REVIVE" show
+  [ "${#output}" -lt 1500 ]
 }
 
 @test "show reports git branch in STATE" {
