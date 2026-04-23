@@ -7,7 +7,9 @@ setup() {
   rm -rf "$WORKDIR"
   mkdir -p "$WORKDIR"
   cd "$WORKDIR"
-  git init -q
+  # -b main: pin default branch name for portability across hosts whose
+  # init.defaultBranch may be `master` or something else.
+  git init -q -b main
   git config user.email test@example.com
   git config user.name test
   git commit -q --allow-empty -m "initial commit"
@@ -135,7 +137,7 @@ teardown() {
 @test "hot_files reports no-history when repo is empty" {
   # nuke initial commit to get a genuinely empty repo
   rm -rf .git
-  git init -q
+  git init -q -b main
   git config user.email test@example.com
   git config user.name test
   run "$REVIVE" show
