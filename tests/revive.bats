@@ -923,11 +923,24 @@ EOF
   [[ "$output" == *"Deliverable 3 — GOTCHAS"* ]]   || return 1
 }
 
-@test "suggest prompt allows preserving a good PURPOSE verbatim" {
+@test "suggest prompt tells agent to preserve substantive sections across the board" {
+  # Semantics: existing human-curated content in PURPOSE / INVARIANTS /
+  # GOTCHAS must survive a re-run. Only placeholder sections get rewritten.
   run "$REVIVE" suggest
   [ "$status" -eq 0 ]
-  # Agent should be told it MAY keep the current PURPOSE if it's already good
-  [[ "$output" == *"keep it verbatim"* ]] || return 1
+  printf '%s\n' "$output" | grep -qF 'Treat existing human-' || return 1
+  printf '%s\n' "$output" | grep -qF 'preserved verbatim'    || return 1
+  printf '%s\n' "$output" | grep -qF 'placeholder state'     || return 1
+}
+
+@test "suggest prompt lists placeholder markers for all three sections" {
+  # Agent needs concrete markers to detect which sections are still
+  # placeholders vs human-curated.
+  run "$REVIVE" suggest
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -qF 'describe this project in 1-3 sentences' || return 1
+  printf '%s\n' "$output" | grep -qF 'top-5 architectural rules'                || return 1
+  printf '%s\n' "$output" | grep -qF 'landmines you keep stepping on'           || return 1
 }
 
 # Codex v0.1.13 P2a: the prompt header used to say "INVARIANTS and GOTCHAS"
@@ -953,14 +966,15 @@ EOF
   printf '%s\n' "$output" | grep -qF '  - .revive/static.md' || return 1
 }
 
-@test "suggest prompt restricts 'keep verbatim' permission to PURPOSE" {
-  # INVARIANTS and GOTCHAS must always be regenerated — guard against the
-  # agent reading the top-level phrasing as permission to skip INVARIANTS/
-  # GOTCHAS too. Use grep to avoid [[ ]] globbing quirks across newlines.
+@test "suggest prompt tells agent to skip STEP 2 when nothing to fill" {
+  # Full no-op path: if all three sections are already substantive, suggest
+  # should short-circuit without editing the file. Prompt wraps across lines
+  # so check the "Nothing to fill" sentinel and the "STEP 2 entirely" cue
+  # separately (both are single-line).
   run "$REVIVE" suggest
   [ "$status" -eq 0 ]
-  printf '%s\n' "$output" | grep -qF 'Only PURPOSE has an exception' || return 1
-  printf '%s\n' "$output" | grep -qF 'NOT reference material'        || return 1
+  printf '%s\n' "$output" | grep -qF 'Nothing to fill'  || return 1
+  printf '%s\n' "$output" | grep -qF 'STEP 2 entirely.' || return 1
 }
 
 @test "suggest prints pipe-to-clipboard hint on stderr only" {
