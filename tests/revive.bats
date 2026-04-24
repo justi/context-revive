@@ -56,8 +56,22 @@ teardown() {
   [[ "$output" == *"# STATIC"* ]]
   [[ "$output" == *"# DYNAMIC"* ]]
   [[ "$output" == *"STATE:"* ]]
-  [[ "$output" == *"TODO:"* ]]
   [[ "$output" == *"HOT_FILES:"* ]]
+  # TODO section is now conditionally omitted when no plan.md/TODO.md
+  # exists (v0.1.7 placeholder-skip); don't assert presence here.
+}
+
+@test "show emits TODO section when plan.md exists, omits it when absent" {
+  # Note: bats-core only fails a test based on the LAST command's exit
+  # status, so we chain [[ ]] with `|| return 1` to make each assertion
+  # actually fail the test. See commit body for v0.1.7 for details.
+  run "$REVIVE" show
+  [[ "$output" != *"TODO:"*  ]]          || return 1
+  [[ "$output" != *"no plan.md"* ]]      || return 1
+  printf -- "- first\n- second\n- third\n" > plan.md
+  run "$REVIVE" show
+  [[ "$output" == *"TODO: (from plan.md)"* ]] || return 1
+  [[ "$output" == *"first"* ]]                || return 1
 }
 
 @test "hot_files shows N× count prefix and last commit msg" {
