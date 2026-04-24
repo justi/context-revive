@@ -61,6 +61,54 @@ teardown() {
   # exists (v0.1.7 placeholder-skip); don't assert presence here.
 }
 
+@test "todo: detects docs/TODO.md when no root-level source exists" {
+  mkdir -p docs
+  printf -- "- first docs todo\n- second\n" > docs/TODO.md
+  run "$REVIVE" show
+  [[ "$output" == *"TODO: (from docs/TODO.md)"* ]] || return 1
+  [[ "$output" == *"first docs todo"* ]]           || return 1
+}
+
+@test "todo: root plan.md wins over docs/TODO.md" {
+  mkdir -p docs
+  printf -- "- docs todo\n" > docs/TODO.md
+  printf -- "- root plan\n" > plan.md
+  run "$REVIVE" show
+  [[ "$output" == *"TODO: (from plan.md)"* ]] || return 1
+  [[ "$output" == *"root plan"* ]]             || return 1
+  [[ "$output" != *"docs todo"* ]]             || return 1
+}
+
+@test "purpose: capped at first sentence boundary" {
+  # Multi-sentence manifest description: only the first sentence should land.
+  printf '{"description":"Baby roleplay sim. A long second sentence that should be trimmed away entirely. And a third."}\n' > package.json
+  run "$REVIVE" init
+  run cat .revive/static.md
+  [[ "$output" == *"Baby roleplay sim."* ]]          || return 1
+  [[ "$output" != *"long second sentence"* ]]        || return 1
+  [[ "$output" != *"And a third"* ]]                 || return 1
+}
+
+@test "purpose: hard-capped at 400 chars when no sentence boundary exists" {
+  local long
+  long=$(printf 'X%.0s' {1..600})
+  printf '{"description":"%s"}\n' "$long" > package.json
+  run "$REVIVE" init
+  run cat .revive/static.md
+  local purpose_line
+  purpose_line=$(printf '%s\n' "$output" | grep '^PURPOSE:' || true)
+  # Exact expected length: "PURPOSE: " (9 chars) + 400 chars of X = 409.
+  # Tight bounds catch off-by-one in the cap (Copilot review).
+  [ "${#purpose_line}" -eq 409 ] || return 1
+}
+
+@test "purpose: short PURPOSE stays untouched by cap" {
+  printf '{"description":"Short purpose."}\n' > package.json
+  run "$REVIVE" init
+  run cat .revive/static.md
+  [[ "$output" == *"PURPOSE: Short purpose."* ]] || return 1
+}
+
 @test "show emits TODO section when plan.md exists, omits it when absent" {
   # Note: bats-core only fails a test based on the LAST command's exit
   # status, so we chain [[ ]] with `|| return 1` to make each assertion
