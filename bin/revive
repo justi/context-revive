@@ -3,9 +3,10 @@
 # https://github.com/justi/context-revive
 set -euo pipefail
 
-VERSION="0.1.0"
+VERSION="0.1.2"
 STATIC_FILE=".revive/static.md"
-BRIEF_CHAR_BUDGET=1500
+COMMANDS_FILE=".revive/commands.md"
+BRIEF_CHAR_BUDGET=1800
 
 LOG_DIR="${HOME}/.context-revive"
 LOG_FILE="${LOG_DIR}/hook.log"
@@ -64,6 +65,98 @@ dyn_todo() {
   echo "TODO: (no plan.md/TODO.md found)"
 }
 
+# Extract up to top-5 well-known command labels (test/lint/build/dev/run/…).
+# Sources, in priority order (first hit per label wins):
+#   1. user override `.revive/commands.md` — dumped verbatim (max 5 lines)
+#   2. package.json `scripts.<label>` for known labels
+#   3. Makefile targets matching known labels
+#   4. Rails-style bin/* (bin/dev, bin/rspec, bin/rubocop, bin/setup)
+# Rationale (2026 research): "exact commands" are the canonical class of
+# non-inferable facts agents need. Architecture overviews are not (they
+# hurt performance); commands are.
+# Append Rails-style bin/* commands to $1 file. Increments $found (eval'd).
+_commands_rails() {
+  local tmp="$1"
+  local n=0
+  [[ -x bin/dev ]]     && { echo "  run: bin/dev"       >> "$tmp"; n=$((n+1)); }
+  [[ -x bin/rspec ]]   && { echo "  test: bin/rspec"    >> "$tmp"; n=$((n+1)); }
+  [[ -x bin/rubocop ]] && { echo "  lint: bin/rubocop"  >> "$tmp"; n=$((n+1)); }
+  [[ -x bin/setup ]]   && { echo "  setup: bin/setup"   >> "$tmp"; n=$((n+1)); }
+  echo "$n"
+}
+
+_commands_npm() {
+  local tmp="$1"
+  local n=0 label script
+  command -v jq >/dev/null 2>&1 || { echo 0; return; }
+  for label in test lint build dev start typecheck format; do
+    script=$(jq -r --arg k "$label" '(.scripts // {})[$k] // empty' package.json 2>/dev/null || true)
+    if [[ -n "$script" ]]; then
+      printf '  %s: %s\n' "$label" "$script" >> "$tmp"
+      n=$((n+1))
+      (( n >= 5 )) && break
+    fi
+  done
+  echo "$n"
+}
+
+_commands_makefile() {
+  local tmp="$1"
+  local n=0 label
+  for label in test lint build dev run install; do
+    if grep -qE "^${label}:" Makefile 2>/dev/null; then
+      printf '  %s: make %s\n' "$label" "$label" >> "$tmp"
+      n=$((n+1))
+      (( n >= 5 )) && break
+    fi
+  done
+  echo "$n"
+}
+
+dyn_commands() {
+  # "show nothing > show placeholder noise" per 2026 context-engineering
+  # research. Section header is emitted only when body is non-empty.
+  if [[ -f "$COMMANDS_FILE" ]]; then
+    local body
+    body=$(head -5 "$COMMANDS_FILE" | sed 's/^/  /')
+    [[ -n "$body" ]] && { echo "COMMANDS:"; printf '%s\n' "$body"; }
+    return
+  fi
+
+  local tmp found=0
+  tmp=$(mktemp)
+
+  # Primary-language detection: prefer conventions of whichever manifest
+  # dominates the project. Rails apps often have a package.json for the
+  # frontend toolchain, but their canonical commands are Ruby bin/* scripts.
+  local ruby_primary=0 node_primary=0
+  { [[ -f Gemfile ]] || ls -- *.gemspec >/dev/null 2>&1; } && ruby_primary=1
+  [[ -f package.json ]] && node_primary=1
+
+  if (( ruby_primary )); then
+    found=$((found + $(_commands_rails "$tmp")))
+  fi
+  if (( found == 0 )) && (( node_primary )); then
+    found=$((found + $(_commands_npm "$tmp")))
+  fi
+  if (( found == 0 )) && [[ -f Makefile ]]; then
+    found=$((found + $(_commands_makefile "$tmp")))
+  fi
+  # fallback: try the other manifest if primary yielded nothing
+  if (( found == 0 )) && (( node_primary )); then
+    found=$((found + $(_commands_npm "$tmp")))
+  fi
+  if (( found == 0 )) && (( ruby_primary )); then
+    found=$((found + $(_commands_rails "$tmp")))
+  fi
+
+  if (( found > 0 )); then
+    echo "COMMANDS:"
+    cat "$tmp"
+  fi
+  rm -f "$tmp"
+}
+
 dyn_hot_files() {
   echo "HOT_FILES: (last 20 commits, last change shown)"
   if ! git rev-parse --git-dir >/dev/null 2>&1; then
@@ -103,16 +196,44 @@ dyn_hot_files() {
 
 # --- STATIC section ---------------------------------------------------------
 
+# Emit STATIC section, skipping placeholder-only INVARIANTS/GOTCHAS blocks.
+# Rationale: injecting "(edit this file)" into every prompt is pure noise —
+# research prefers empty sections to placeholder ones.
 static_section() {
-  if [[ -f "$STATIC_FILE" ]]; then
-    cat "$STATIC_FILE"
-  else
+  if [[ ! -f "$STATIC_FILE" ]]; then
     cat <<EOF
 PURPOSE: (run \`revive init\` to scaffold $STATIC_FILE)
-INVARIANTS: (none defined)
-GOTCHAS: (none defined)
 EOF
+    return
   fi
+  awk '
+    # state: section header line currently being considered
+    # strategy: buffer each section, emit only if its body has non-placeholder content
+    function flush() {
+      if (NR_buf == 0) return
+      has_real = 0
+      for (i = 1; i <= NR_buf; i++) {
+        line = buf[i]
+        # the header itself always counts
+        if (i == 1) continue
+        # skip placeholder lines
+        if (line ~ /^[[:space:]]*-?[[:space:]]*\(/ && line ~ /edit this file|none defined/) continue
+        if (line ~ /^[[:space:]]*$/) continue
+        has_real = 1; break
+      }
+      if (has_real || buf[1] ~ /^PURPOSE:/) {
+        for (i = 1; i <= NR_buf; i++) print buf[i]
+      } else {
+        # collapse to one-line marker so placement stays stable
+        # (strip bullet points entirely)
+        print buf[1]
+      }
+      NR_buf = 0
+    }
+    /^(PURPOSE|INVARIANTS|GOTCHAS):/ { flush(); buf[++NR_buf] = $0; next }
+    { buf[++NR_buf] = $0 }
+    END { flush() }
+  ' "$STATIC_FILE"
 }
 
 # --- brief assembler --------------------------------------------------------
@@ -127,6 +248,7 @@ build_brief() {
   dyn_state
   dyn_todo
   dyn_hot_files
+  dyn_commands
   echo "</revive>"
 }
 
@@ -199,19 +321,130 @@ cmd_refresh() {
   return 0
 }
 
+# --- PURPOSE extraction chain --------------------------------------------
+# Order (each step is optional, falls through to next):
+#   1. `gh repo view --json description` (curated 1-liner, highest quality)
+#   2. Manifest description fields (pyproject.toml, package.json, Cargo.toml, *.gemspec, composer.json)
+#   3. CLAUDE.md "## What this project is" / "## About" first paragraph
+#   4. README.md filtered prose (blockquote-aware, strips badges/rulers/bullet-links)
+#   5. Placeholder
+#
+# Each extractor prints the description on stdout and returns 0, or returns
+# non-zero (or prints nothing) to signal "try the next source".
+
+purpose_from_gh() {
+  command -v gh >/dev/null 2>&1 || return 1
+  git rev-parse --git-dir >/dev/null 2>&1 || return 1
+  local d
+  d=$(gh repo view --json description --jq '.description // empty' 2>/dev/null) || return 1
+  [[ -n "$d" && "$d" != "null" ]] || return 1
+  printf '%s\n' "$d"
+}
+
+purpose_from_pyproject() {
+  [[ -f pyproject.toml ]] || return 1
+  awk '
+    /^\[project\]/           { in_p=1; next }
+    /^\[/ && !/^\[project\]/ { in_p=0 }
+    in_p && /^[[:space:]]*description[[:space:]]*=/ {
+      sub(/^[[:space:]]*description[[:space:]]*=[[:space:]]*/, "")
+      gsub(/^["'"'"']|["'"'"'][[:space:]]*$/, "")
+      print; exit
+    }
+  ' pyproject.toml
+}
+
+purpose_from_package_json() {
+  [[ -f package.json ]] || return 1
+  if command -v jq >/dev/null 2>&1; then
+    jq -r '.description // empty' package.json 2>/dev/null
+  else
+    grep -E '^[[:space:]]*"description"[[:space:]]*:' package.json | head -1 \
+      | sed -E 's/.*"description"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/'
+  fi
+}
+
+purpose_from_cargo() {
+  [[ -f Cargo.toml ]] || return 1
+  awk '
+    /^\[package\]/           { in_p=1; next }
+    /^\[/ && !/^\[package\]/ { in_p=0 }
+    in_p && /^[[:space:]]*description[[:space:]]*=/ {
+      sub(/^[[:space:]]*description[[:space:]]*=[[:space:]]*/, "")
+      gsub(/^["'"'"']|["'"'"'][[:space:]]*$/, "")
+      print; exit
+    }
+  ' Cargo.toml
+}
+
+purpose_from_gemspec() {
+  local gs
+  gs=$(ls -- *.gemspec 2>/dev/null | head -1) || return 1
+  [[ -n "$gs" ]] || return 1
+  grep -E '\.(summary|description)[[:space:]]*=' "$gs" | head -1 \
+    | sed -E "s/.*(summary|description)[[:space:]]*=[[:space:]]*//; s/^[\"']//; s/[\"'].*$//"
+}
+
+purpose_from_composer() {
+  [[ -f composer.json ]] || return 1
+  if command -v jq >/dev/null 2>&1; then
+    jq -r '.description // empty' composer.json 2>/dev/null
+  fi
+}
+
+purpose_from_claudemd() {
+  [[ -f CLAUDE.md ]] || return 1
+  awk '
+    /^##[[:space:]]+(What this project is|About)/ { cap=1; next }
+    cap && /^##/ { exit }
+    cap && NF    { print; exit }
+  ' CLAUDE.md
+}
+
+# Filter badges, blockquote markers, rulers, bullet-link-only lines.
+# Blockquotes that contain substantive text are accepted with `>` stripped.
+purpose_from_readme() {
+  [[ -f README.md ]] || return 1
+  awk '
+    # strip leading/trailing whitespace
+    { gsub(/^[[:space:]]+|[[:space:]]+$/, "") }
+    # skip empty, headers, code fences, html tags, images, badge shields
+    /^$/ || /^#/ || /^```/ || /^</ || /^!\[/ { next }
+    # skip horizontal rulers (ascii + unicode)
+    /^[-=*_─═]{3,}$/ { next }
+    # skip bullet-link-only markdown lines
+    /^-[[:space:]]+\[.*\]\(.*\)/ { next }
+    # skip leading badge-collections (link-only lines)
+    /^\[!?\[/ { next }
+    # strip blockquote marker but accept content
+    /^>[[:space:]]*/ { sub(/^>[[:space:]]*/, "") }
+    # skip lines that are still empty after stripping
+    NF == 0 { next }
+    { print; count++; if (count==2) exit }
+  ' README.md | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//'
+}
+
+compute_purpose() {
+  local p
+  if p=$(purpose_from_gh)           && [[ -n "$p" ]]; then echo "$p"; return; fi
+  if p=$(purpose_from_pyproject)    && [[ -n "$p" ]]; then echo "$p"; return; fi
+  if p=$(purpose_from_package_json) && [[ -n "$p" ]]; then echo "$p"; return; fi
+  if p=$(purpose_from_cargo)        && [[ -n "$p" ]]; then echo "$p"; return; fi
+  if p=$(purpose_from_gemspec)      && [[ -n "$p" ]]; then echo "$p"; return; fi
+  if p=$(purpose_from_composer)     && [[ -n "$p" ]]; then echo "$p"; return; fi
+  if p=$(purpose_from_claudemd)     && [[ -n "$p" ]]; then echo "$p"; return; fi
+  if p=$(purpose_from_readme)       && [[ -n "$p" ]]; then echo "$p"; return; fi
+  echo "(describe this project in 1-3 sentences)"
+}
+
 cmd_init() {
   if [[ -e "$STATIC_FILE" ]]; then
     echo "exists: $STATIC_FILE (not overwriting)" >&2
     exit 1
   fi
   mkdir -p "$(dirname "$STATIC_FILE")"
-  local purpose="(describe this project in 1-3 sentences)"
-  if [[ -f README.md ]]; then
-    local extracted
-    extracted=$(grep -vE '^\s*(#|>|```|$)' README.md | head -2 \
-      | tr '\n' ' ' | sed 's/  */ /g;s/^ //;s/ $//')
-    [[ -n "$extracted" ]] && purpose="$extracted"
-  fi
+  local purpose
+  purpose=$(compute_purpose)
   cat > "$STATIC_FILE" <<EOF
 PURPOSE: ${purpose}
 INVARIANTS:
