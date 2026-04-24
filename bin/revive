@@ -3,7 +3,7 @@
 # https://github.com/justi/context-revive
 set -euo pipefail
 
-VERSION="0.1.3"
+VERSION="0.1.4"
 STATIC_FILE=".revive/static.md"
 COMMANDS_FILE=".revive/commands.md"
 BRIEF_CHAR_BUDGET=1800
@@ -23,6 +23,9 @@ Commands:
   init              Generate .revive/static.md (PURPOSE, INVARIANTS, GOTCHAS).
                     Use `init --force` to regenerate PURPOSE from the chain
                     while preserving user-edited INVARIANTS and GOTCHAS.
+  suggest           Print an LLM-ready prompt that, when pasted into any
+                    coding agent, generates INVARIANTS + GOTCHAS for this
+                    project. Tailored to the actual files in the repo.
   show              Print the brief that would be injected (force-emit)
   refresh           Hook entry point — cadence-gated, silent on failure
   install-hook      Wire UserPromptSubmit into .claude/settings.json
@@ -516,6 +519,134 @@ cmd_init() {
   fi
 }
 
+# Build a prompt that a coding agent (Claude Code / Cursor / Aider / any
+# chat-style LLM with file-read access) can execute against the current
+# project to fill INVARIANTS and GOTCHAS in .revive/static.md.
+#
+# Keeps the agent's job focused: inject non-inferable rules only (no
+# architecture / dir-tree / inferable-from-code noise).
+cmd_suggest() {
+  local sources=()
+  [[ -f CLAUDE.md ]]    && sources+=("CLAUDE.md")
+  [[ -f AGENTS.md ]]    && sources+=("AGENTS.md")
+  [[ -f README.md ]]    && sources+=("README.md (first 100 lines)")
+  [[ -d adr ]]          && sources+=("adr/*.md")
+  [[ -d docs/adr ]]     && sources+=("docs/adr/*.md")
+  [[ -d docs ]]         && sources+=("docs/*.md")
+  [[ -f CHANGELOG.md ]] && sources+=("CHANGELOG.md (recent entries)")
+  sources+=("git log --oneline -30")
+
+  local hot=""
+  if git rev-parse --git-dir >/dev/null 2>&1; then
+    hot=$(git log --name-only --pretty=format: -20 2>/dev/null \
+      | grep -v '^$' \
+      | grep -vE '(^|/)(package-lock\.json|pnpm-lock\.yaml)$|\.lock$|\.min\.(js|css)$|^(dist|build|node_modules|vendor)/' \
+      | sort | uniq -c | sort -rn | head -5 \
+      | awk '{$1=""; sub(/^ /,""); print}' || true)
+  fi
+
+  cat <<'PROMPT_HEADER'
+# Paste the block below into Claude Code / Cursor / Aider / any LLM with
+# file-read access. It will read this project's artefacts and return two
+# ready-to-paste blocks for .revive/static.md.
+#
+# Copy EVERYTHING between the BEGIN / END markers — do not edit.
+
+--- BEGIN PROMPT ---
+
+Read the following artefacts in the current project, then generate
+INVARIANTS and GOTCHAS sections for a file at .revive/static.md.
+
+Files to read:
+PROMPT_HEADER
+
+  local s
+  for s in "${sources[@]}"; do
+    printf '  - %s\n' "$s"
+  done
+
+  if [[ -n "$hot" ]]; then
+    echo "  - Top HOT_FILES (recent activity concentration):"
+    while IFS= read -r f; do
+      printf '      %s\n' "$f"
+    done <<<"$hot"
+  fi
+
+  cat <<'PROMPT_BODY'
+
+Strict rules (violations are failures, not stylistic preferences):
+
+  1. Include ONLY non-inferable facts. If an agent can read it from the
+     code with a single grep/ls, do NOT include it. Target rules that
+     hurt only when broken — not conventions that are visible.
+  2. Each bullet <= 120 characters. Dense > complete.
+  3. Do NOT generate: architecture overviews, directory trees, module
+     listings, dependency graphs, "we use Framework X" facts, or
+     anything auto-inferable. (2026 research shows auto-generated
+     structure degrades agent success rate by 0.5–2%.)
+  4. Do NOT repeat PURPOSE. Don't paraphrase the README.
+  5. If you can't back a claim with a specific file / ADR / commit /
+     incident, OMIT it. Placeholder > false confidence.
+
+Deliverable 1 — INVARIANTS (up to 5):
+  Architectural or operational rules whose breakage causes non-obvious
+  damage. Examples of the *class* of content to produce:
+    - decisions captured in ADRs that contradict "obvious" approaches
+    - hard constraints from past production incidents
+    - "never do X because Y" where Y is invisible to a reader
+    - "always X before Y" ordering requirements
+
+  Bad examples (do NOT produce these — they're inferable):
+    - "We use Rails 8."            (visible in Gemfile.lock)
+    - "Code lives in app/."        (visible from ls)
+    - "We have tests."             (visible from test/ or spec/)
+
+  Good examples (produce things like these):
+    - "All LLM calls must go through ruby_llm-contract — raw Faraday
+       retries caused the Feb-15 outage (ADR-012)."
+    - "Never run data migrations on Monday; the cron vacuum window
+       overlaps and rollbacks stall."
+
+Deliverable 2 — GOTCHAS (3 to 5):
+  Landmines whose fix is not obvious from code alone. Dependency quirks,
+  rate limits, migrations needing manual steps, config that looks like a
+  bug but is deliberate, platform-specific behaviour.
+
+  Bad examples:
+    - "Remember to run tests."     (trivial)
+    - "Check for typos."           (not a project fact)
+
+  Good examples:
+    - "Reddit API caps at 60 req/min per OAuth app; scraper uses
+       exponential backoff — do NOT add token rotation, it was tried
+       and flagged as ToS abuse."
+    - "Migration 20260219_* needs `rails data:migrate` after deploy;
+       schema-only deploys leave an unusable null column."
+
+Quality bar: 3 strong rules beat 5 weak ones. Same for gotchas.
+
+Output format — EXACTLY this, no code fences, no commentary:
+
+INVARIANTS:
+  - <rule 1>
+  - <rule 2>
+  - <rule 3>
+GOTCHAS:
+  - <landmine 1>
+  - <landmine 2>
+  - <landmine 3>
+
+Show me the output as a plain text block. I will paste it into
+.revive/static.md myself, replacing the existing INVARIANTS: and
+GOTCHAS: sections (leave PURPOSE untouched).
+
+--- END PROMPT ---
+
+# Tip: `revive suggest | pbcopy` on macOS puts it straight into the
+# clipboard, ready to paste into your agent of choice.
+PROMPT_BODY
+}
+
 cmd_install_hook() {
   local scope="${1:-}" settings_path=".claude/settings.json"
   if [[ "$scope" == "--global" ]]; then
@@ -576,6 +707,7 @@ main() {
     init)          cmd_init "$@" ;;
     show)          cmd_show "$@" ;;
     refresh)       cmd_refresh "$@" ;;
+    suggest)       cmd_suggest "$@" ;;
     install-hook)  cmd_install_hook "$@" ;;
     version|--version|-v) cmd_version ;;
     help|--help|-h)       usage ;;

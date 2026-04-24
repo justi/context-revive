@@ -32,13 +32,24 @@ Requires:
 
 ```bash
 cd your-project
-revive init              # scaffold .revive/static.md
+revive init              # scaffold .revive/static.md (PURPOSE auto-detected)
+revive suggest | pbcopy  # optional — prompt for your agent to fill INVARIANTS/GOTCHAS
 revive install-hook      # wire UserPromptSubmit into .claude/settings.json
 revive show              # preview the brief
 ```
 
 Every 5th prompt (or after 10 min / first call) Claude Code gets the
 brief prepended to context — deterministic, <1800 chars, <100ms.
+
+### Filling INVARIANTS and GOTCHAS with your agent
+
+`revive init` gives you PURPOSE; INVARIANTS and GOTCHAS are the
+human-curated sections (research shows auto-generation here hurts).
+`revive suggest` prints a project-tailored LLM prompt you can paste
+into Claude Code, Cursor, Aider, or any chat agent with file-read
+access — it lists your actual CLAUDE.md / ADRs / HOT_FILES and asks
+for 3-5 non-inferable rules. Paste the output into
+`.revive/static.md` and you're done.
 
 ## Brief format
 
