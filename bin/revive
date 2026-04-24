@@ -3,7 +3,7 @@
 # https://github.com/justi/context-revive
 set -euo pipefail
 
-VERSION="0.1.7"
+VERSION="0.1.8"
 STATIC_FILE=".revive/static.md"
 COMMANDS_FILE=".revive/commands.md"
 BRIEF_CHAR_BUDGET=2200
@@ -63,8 +63,11 @@ dyn_todo() {
   # with COMMANDS section behavior and the "show nothing > show placeholder
   # noise" principle. Injecting "(no plan.md/TODO.md found)" into every
   # prompt is ~32 chars of zero-signal content.
+  #
+  # Search root first, then docs/ (common convention for mature projects).
   local f
-  for f in plan.md PLAN.md TODO.md todo.md TODO ROADMAP.md; do
+  for f in plan.md PLAN.md TODO.md todo.md TODO ROADMAP.md \
+           docs/plan.md docs/PLAN.md docs/TODO.md docs/todo.md docs/ROADMAP.md; do
     if [[ -f "$f" ]]; then
       echo "TODO: (from $f)"
       grep -vE '^\s*(#|$)' "$f" | head -3 | sed 's/^/  /'
@@ -455,16 +458,50 @@ purpose_from_readme() {
   ' README.md | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//'
 }
 
+# Cap PURPOSE at the end of the first sentence OR 400 chars, whichever
+# comes first. Source extractors (CLAUDE.md, README) may join multi-line
+# paragraphs into very long strings; injecting 800-char PURPOSE wastes
+# budget and buries signal. Single-sentence 1-liners are the target.
+#
+# A "sentence boundary" is `[.!?]` followed by whitespace or end-of-input.
+# This avoids mis-cutting on embedded dots like `package.json`, `ADR 0001.`
+# mid-phrase, or filenames. Heuristic is deliberately simple — common
+# English abbreviations (Dr., Inc.) may still cause false cuts, but those
+# are rare in curated repo descriptions.
+cap_purpose() {
+  local text="$1"
+  local max=400
+  local n=${#text}
+  local i=0 c next
+  while (( i < n )); do
+    c="${text:$i:1}"
+    if [[ "$c" == "." || "$c" == "!" || "$c" == "?" ]]; then
+      next="${text:$((i+1)):1}"
+      if [[ -z "$next" || "$next" == " " || "$next" == $'\t' ]]; then
+        printf '%s\n' "${text:0:$((i+1))}"
+        return
+      fi
+    fi
+    i=$((i+1))
+    (( i > max )) && break
+  done
+  if (( n <= max )); then
+    printf '%s\n' "$text"
+  else
+    printf '%s\n' "${text:0:$max}"
+  fi
+}
+
 compute_purpose() {
   local p
-  if p=$(purpose_from_gh)           && [[ -n "$p" ]]; then echo "$p"; return; fi
-  if p=$(purpose_from_pyproject)    && [[ -n "$p" ]]; then echo "$p"; return; fi
-  if p=$(purpose_from_package_json) && [[ -n "$p" ]]; then echo "$p"; return; fi
-  if p=$(purpose_from_cargo)        && [[ -n "$p" ]]; then echo "$p"; return; fi
-  if p=$(purpose_from_gemspec)      && [[ -n "$p" ]]; then echo "$p"; return; fi
-  if p=$(purpose_from_composer)     && [[ -n "$p" ]]; then echo "$p"; return; fi
-  if p=$(purpose_from_claudemd)     && [[ -n "$p" ]]; then echo "$p"; return; fi
-  if p=$(purpose_from_readme)       && [[ -n "$p" ]]; then echo "$p"; return; fi
+  if p=$(purpose_from_gh)           && [[ -n "$p" ]]; then cap_purpose "$p"; return; fi
+  if p=$(purpose_from_pyproject)    && [[ -n "$p" ]]; then cap_purpose "$p"; return; fi
+  if p=$(purpose_from_package_json) && [[ -n "$p" ]]; then cap_purpose "$p"; return; fi
+  if p=$(purpose_from_cargo)        && [[ -n "$p" ]]; then cap_purpose "$p"; return; fi
+  if p=$(purpose_from_gemspec)      && [[ -n "$p" ]]; then cap_purpose "$p"; return; fi
+  if p=$(purpose_from_composer)     && [[ -n "$p" ]]; then cap_purpose "$p"; return; fi
+  if p=$(purpose_from_claudemd)     && [[ -n "$p" ]]; then cap_purpose "$p"; return; fi
+  if p=$(purpose_from_readme)       && [[ -n "$p" ]]; then cap_purpose "$p"; return; fi
   echo "(describe this project in 1-3 sentences)"
 }
 
