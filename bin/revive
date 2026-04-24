@@ -24,8 +24,8 @@ Commands:
                     Use `init --force` to regenerate PURPOSE from the chain
                     while preserving user-edited INVARIANTS and GOTCHAS.
   suggest           Print an LLM-ready prompt that, when pasted into any
-                    coding agent, generates INVARIANTS + GOTCHAS for this
-                    project. Tailored to the actual files in the repo.
+                    coding agent, generates PURPOSE + INVARIANTS + GOTCHAS
+                    for this project. Tailored to the actual files in the repo.
   show              Print the brief that would be injected (force-emit)
   refresh           Hook entry point — cadence-gated, silent on failure
   install-hook      Wire UserPromptSubmit into .claude/settings.json
@@ -661,7 +661,7 @@ cmd_init() {
 
 # Build a prompt that a coding agent (Claude Code / Cursor / Aider / any
 # chat-style LLM with file-read access) can execute against the current
-# project to fill INVARIANTS and GOTCHAS in .revive/static.md.
+# project to fill PURPOSE, INVARIANTS, and GOTCHAS in .revive/static.md.
 #
 # Keeps the agent's job focused: inject non-inferable rules only (no
 # architecture / dir-tree / inferable-from-code noise).
@@ -697,10 +697,15 @@ cmd_suggest() {
 PROMPT_META
 
   cat <<'PROMPT_HEADER'
-Read the following artefacts in the current project, then generate
-INVARIANTS and GOTCHAS sections for a file at .revive/static.md.
+Read the following artefacts in the current project, then generate a
+PURPOSE line, INVARIANTS section, and GOTCHAS section for a file at
+.revive/static.md. The file ALREADY EXISTS — read it first so you can
+see the current values and decide whether to rewrite or keep each one.
 
-Files to read:
+Files to read (the current `.revive/static.md` is the most important —
+skim it first):
+  - .revive/static.md (current PURPOSE / INVARIANTS / GOTCHAS — read
+    so you can preserve a good PURPOSE verbatim; see STEP 2 below)
 PROMPT_HEADER
 
   local s

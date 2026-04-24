@@ -930,6 +930,31 @@ EOF
   [[ "$output" == *"keep it verbatim"* ]] || return 1
 }
 
+# Codex v0.1.13 P2a: the prompt header used to say "INVARIANTS and GOTCHAS"
+# without mentioning PURPOSE, so the agent could ignore PURPOSE generation.
+@test "suggest prompt header mentions PURPOSE as a deliverable" {
+  run "$REVIVE" suggest
+  [ "$status" -eq 0 ]
+  # The OPENING instruction must name PURPOSE, not only INVARIANTS/GOTCHAS.
+  # Look in the first half of the prompt specifically.
+  local head
+  head=$(printf '%s\n' "$output" | head -10)
+  [[ "$head" == *"PURPOSE"* ]] || return 1
+}
+
+# Codex v0.1.13 P2b: the "keep PURPOSE verbatim" path only works if the
+# agent actually reads the current file. Ensure it's in the artefacts list.
+@test "suggest prompt lists .revive/static.md in the files-to-read set" {
+  # create a bare static.md so the check isn't just about prompt text —
+  # suggest's instruction must reference the file explicitly
+  mkdir -p .revive
+  touch .revive/static.md
+  run "$REVIVE" suggest
+  [ "$status" -eq 0 ]
+  # Must explicitly tell the agent to read .revive/static.md
+  [[ "$output" == *".revive/static.md"*"current PURPOSE"* ]] || return 1
+}
+
 @test "suggest prints pipe-to-clipboard hint on stderr only" {
   local stdout stderr
   stdout=$("$REVIVE" suggest 2>/dev/null)
