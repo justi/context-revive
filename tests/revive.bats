@@ -906,13 +906,75 @@ EOF
   run "$REVIVE" suggest
   [ "$status" -eq 0 ]
   # step 1: preview
-  [[ "$output" == *"STEP 1"* ]]
-  [[ "$output" == *"preview"* ]]
+  [[ "$output" == *"STEP 1"* ]] || return 1
+  [[ "$output" == *"preview"* ]] || return 1
   # step 2: edit the file in place
-  [[ "$output" == *"STEP 2"* ]]
-  [[ "$output" == *".revive/static.md"* ]]
+  [[ "$output" == *"STEP 2"* ]] || return 1
+  [[ "$output" == *".revive/static.md"* ]] || return 1
   # guard against creating the file if it doesn't exist
-  [[ "$output" == *"revive init"* ]]
+  [[ "$output" == *"revive init"* ]] || return 1
+}
+
+@test "suggest prompt requests PURPOSE as Deliverable 1 (v0.1.13)" {
+  run "$REVIVE" suggest
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Deliverable 1 — PURPOSE"* ]]   || return 1
+  [[ "$output" == *"Deliverable 2 — INVARIANTS"* ]] || return 1
+  [[ "$output" == *"Deliverable 3 — GOTCHAS"* ]]   || return 1
+}
+
+@test "suggest prompt tells agent to preserve substantive sections across the board" {
+  # Semantics: existing human-curated content in PURPOSE / INVARIANTS /
+  # GOTCHAS must survive a re-run. Only placeholder sections get rewritten.
+  run "$REVIVE" suggest
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -qF 'Treat existing human-' || return 1
+  printf '%s\n' "$output" | grep -qF 'preserved verbatim'    || return 1
+  printf '%s\n' "$output" | grep -qF 'placeholder state'     || return 1
+}
+
+@test "suggest prompt lists placeholder markers for all three sections" {
+  # Agent needs concrete markers to detect which sections are still
+  # placeholders vs human-curated.
+  run "$REVIVE" suggest
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -qF 'describe this project in 1-3 sentences' || return 1
+  printf '%s\n' "$output" | grep -qF 'top-5 architectural rules'                || return 1
+  printf '%s\n' "$output" | grep -qF 'landmines you keep stepping on'           || return 1
+}
+
+# Codex v0.1.13 P2a: the prompt header used to say "INVARIANTS and GOTCHAS"
+# without mentioning PURPOSE, so the agent could ignore PURPOSE generation.
+@test "suggest prompt header mentions PURPOSE as a deliverable" {
+  run "$REVIVE" suggest
+  [ "$status" -eq 0 ]
+  # The OPENING instruction must name PURPOSE, not only INVARIANTS/GOTCHAS.
+  # Look in the first half of the prompt specifically.
+  local head
+  head=$(printf '%s\n' "$output" | head -10)
+  [[ "$head" == *"PURPOSE"* ]] || return 1
+}
+
+# Codex v0.1.13 P2b: the "keep PURPOSE verbatim" path only works if the
+# agent actually reads the current file. Ensure it's in the artefacts list.
+@test "suggest prompt lists .revive/static.md as a bullet in the artefacts set" {
+  # Must appear as an actual bullet entry ("  - .revive/static.md") inside
+  # the "Files to read" block — not just in the STEP 2 instruction later.
+  # Use grep -F (fixed string) to require that literal prefix+path combo.
+  run "$REVIVE" suggest
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -qF '  - .revive/static.md' || return 1
+}
+
+@test "suggest prompt tells agent to skip STEP 2 when nothing to fill" {
+  # Full no-op path: if all three sections are already substantive, suggest
+  # should short-circuit without editing the file. Prompt wraps across lines
+  # so check the "Nothing to fill" sentinel and the "STEP 2 entirely" cue
+  # separately (both are single-line).
+  run "$REVIVE" suggest
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -qF 'Nothing to fill'  || return 1
+  printf '%s\n' "$output" | grep -qF 'STEP 2 entirely.' || return 1
 }
 
 @test "suggest prints pipe-to-clipboard hint on stderr only" {

@@ -3,7 +3,7 @@
 # https://github.com/justi/context-revive
 set -euo pipefail
 
-VERSION="0.1.12"
+VERSION="0.1.13"
 STATIC_FILE=".revive/static.md"
 COMMANDS_FILE=".revive/commands.md"
 BRIEF_CHAR_BUDGET=2200
@@ -24,8 +24,8 @@ Commands:
                     Use `init --force` to regenerate PURPOSE from the chain
                     while preserving user-edited INVARIANTS and GOTCHAS.
   suggest           Print an LLM-ready prompt that, when pasted into any
-                    coding agent, generates INVARIANTS + GOTCHAS for this
-                    project. Tailored to the actual files in the repo.
+                    coding agent, generates PURPOSE + INVARIANTS + GOTCHAS
+                    for this project. Tailored to the actual files in the repo.
   show              Print the brief that would be injected (force-emit)
   refresh           Hook entry point — cadence-gated, silent on failure
   install-hook      Wire UserPromptSubmit into .claude/settings.json
@@ -661,7 +661,7 @@ cmd_init() {
 
 # Build a prompt that a coding agent (Claude Code / Cursor / Aider / any
 # chat-style LLM with file-read access) can execute against the current
-# project to fill INVARIANTS and GOTCHAS in .revive/static.md.
+# project to fill PURPOSE, INVARIANTS, and GOTCHAS in .revive/static.md.
 #
 # Keeps the agent's job focused: inject non-inferable rules only (no
 # architecture / dir-tree / inferable-from-code noise).
@@ -689,18 +689,38 @@ cmd_suggest() {
   # prompt in the clipboard, not our framing.
   cat >&2 <<'PROMPT_META'
 # Paste this prompt into your current Claude Code / Cursor / Aider session.
-# The agent will read your project files, generate INVARIANTS + GOTCHAS,
-# preview them, then edit .revive/static.md for you — end-to-end.
+# The agent will read your project files, generate PURPOSE + INVARIANTS +
+# GOTCHAS, preview them, then edit .revive/static.md for you — end-to-end.
 #
 # Pipe to clipboard: `revive suggest | pbcopy` (macOS).
 # Requires: .revive/static.md must already exist (run `revive init` first).
 PROMPT_META
 
   cat <<'PROMPT_HEADER'
-Read the following artefacts in the current project, then generate
-INVARIANTS and GOTCHAS sections for a file at .revive/static.md.
+Read the following artefacts in the current project, then fill any
+placeholder sections of .revive/static.md. Treat existing human-
+curated content as sacred: PURPOSE, INVARIANTS, and GOTCHAS that
+already contain real content must be preserved verbatim — do not
+rewrite substantive sections just because you can.
 
-Files to read:
+Regenerate ONLY sections that are still in their `revive init`
+placeholder state. Recognise a placeholder by these markers:
+
+  - PURPOSE: literal `(describe this project in 1-3 sentences)`,
+    OR a single short fragment clearly extracted from a manifest/
+    README without context (a one-sentence pitch under ~80 chars
+    that doesn't frame the project).
+  - INVARIANTS: bullets containing `(top-5 architectural rules;
+    edit this file)` or `(none defined)`.
+  - GOTCHAS: bullets containing `(landmines you keep stepping on;
+    edit this file)` or `(none defined)`.
+
+Anything else is user-curated — leave it alone.
+
+Files to read (read `.revive/static.md` FIRST — you need its current
+contents to decide which sections are placeholders):
+  - .revive/static.md (the file you will edit; checks placeholder
+    state per section)
 PROMPT_HEADER
 
   local s
@@ -727,11 +747,35 @@ Strict rules (violations are failures, not stylistic preferences):
      listings, dependency graphs, "we use Framework X" facts, or
      anything auto-inferable. (2026 research shows auto-generated
      structure degrades agent success rate by 0.5–2%.)
-  4. Do NOT repeat PURPOSE. Don't paraphrase the README.
+  4. Don't paraphrase the README verbatim for non-PURPOSE sections.
   5. If you can't back a claim with a specific file / ADR / commit /
      incident, OMIT it. Placeholder > false confidence.
 
-Deliverable 1 — INVARIANTS (up to 5):
+Deliverable 1 — PURPOSE (single line, ≤ 400 chars):
+  A tight 2-3 sentence summary that answers:
+    - what the project IS (product one-liner)
+    - its essential philosophy or hard constraint (what makes it different)
+  Include just enough context that someone reading only the brief could
+  pick up work without reading README/CLAUDE.md first.
+
+  Bad examples:
+    - "A Flutter app."                    (useless, inferable)
+    - single terse fragment under 60 chars (too terse)
+    - 800-char pasted README intro        (too long, buries signal)
+
+  Good examples (generic):
+    - "A CLI that turns Markdown invoices into tax-compliant PDFs.
+       Zero-config for sole traders in EU/UK; one-flag override for
+       custom templates."
+    - "Background-job scheduler for Go services. Unlike cron,
+       schedules are defined in code and survive deploys; job state
+       lives in the same Postgres the app already uses."
+
+  If the CURRENT PURPOSE line in .revive/static.md is already a good
+  2-3 sentence summary (clearly readable, frames the project well),
+  keep it verbatim — don't rewrite for its own sake.
+
+Deliverable 2 — INVARIANTS (up to 5):
   Architectural or operational rules whose breakage causes non-obvious
   damage. Examples of the *class* of content to produce:
     - decisions captured in ADRs that contradict "obvious" approaches
@@ -750,7 +794,7 @@ Deliverable 1 — INVARIANTS (up to 5):
     - "Never run data migrations on Monday; the cron vacuum window
        overlaps and rollbacks stall."
 
-Deliverable 2 — GOTCHAS (3 to 5):
+Deliverable 3 — GOTCHAS (3 to 5):
   Landmines whose fix is not obvious from code alone. Dependency quirks,
   rate limits, migrations needing manual steps, config that looks like a
   bug but is deliberate, platform-specific behaviour.
@@ -768,9 +812,11 @@ Deliverable 2 — GOTCHAS (3 to 5):
 
 Quality bar: 3 strong rules beat 5 weak ones. Same for gotchas.
 
-Required format for the INVARIANTS / GOTCHAS blocks (exact indentation,
-no code fences, no commentary):
+Required output format (exact indentation, no code fences, no
+commentary). PURPOSE is a single line; INVARIANTS/GOTCHAS are bullet
+lists with two-space indent:
 
+PURPOSE: <single 2-3 sentence summary, ≤ 400 chars>
 INVARIANTS:
   - <rule 1>
   - <rule 2>
@@ -782,18 +828,25 @@ GOTCHAS:
 
 Do two things, in order — do NOT stop after step 1:
 
-  STEP 1 — Print the generated block to the chat as a plain text
-  preview so I can sanity-check it before it hits my repo.
+  STEP 1 — For each placeholder section you chose to fill, print the
+  generated block to the chat as a plain text preview so I can
+  sanity-check it before it hits my repo. For sections you're
+  PRESERVING, say so explicitly ("PURPOSE: keeping existing" /
+  "INVARIANTS: keeping 5 existing rules verbatim"). If all three
+  sections are already substantive, print a single line
+  ("Nothing to fill — .revive/static.md already curated") and skip
+  STEP 2 entirely.
 
-  STEP 2 — Open .revive/static.md and edit it in place: replace the
-  existing `INVARIANTS:` and `GOTCHAS:` sections with the ones you
-  just generated. Leave the `PURPOSE:` line untouched. Preserve file
-  ordering (PURPOSE → INVARIANTS → GOTCHAS). Use your editor tool
-  (Edit / Write / str_replace — whatever your agent framework
-  exposes); do NOT ask me to paste manually.
+  STEP 2 — Open .revive/static.md and edit it in place: replace
+  ONLY the sections you identified as placeholders. Preserve file
+  ordering (PURPOSE → INVARIANTS → GOTCHAS). Do NOT touch sections
+  you decided to preserve. Use your editor tool (Edit / Write /
+  str_replace — whatever your agent framework exposes); do NOT
+  ask me to paste manually.
 
-  After step 2, confirm with a one-line summary of what you wrote and
-  the final line count of .revive/static.md.
+  After step 2, confirm with a one-line summary of which sections
+  were rewritten and which were preserved, plus the final line
+  count of .revive/static.md.
 
 If .revive/static.md does not exist, stop and tell me to run
 `revive init` first — do NOT create it from scratch (PURPOSE
