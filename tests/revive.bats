@@ -1009,6 +1009,26 @@ EOF
   [[ "$output" == *"Deliverable 4 — GOTCHAS"* ]]          || return 1
 }
 
+# v0.1.15 — section limits raised for projects with formal architecture
+# rule series; hard-cap guidance updated to reference the real hook limit.
+@test "suggest prompt does NOT cap INVARIANTS at 5" {
+  run "$REVIVE" suggest
+  [ "$status" -eq 0 ]
+  # Must not carry the old "up to 5" language on INVARIANTS
+  printf '%s\n' "$output" | grep -F 'INVARIANTS (up to 5)' && return 1
+  # Must mention the project-size heuristic that allows more
+  printf '%s\n' "$output" | grep -qF 'formal architecture-rules ADR' || return 1
+}
+
+@test "suggest prompt tells agent not to self-censor for aesthetic reasons" {
+  # Aimed at the failure mode where agent caps at 5 INVARIANTS even
+  # when the project has 9 canonical rules.
+  run "$REVIVE" suggest
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -qF 'Missing a rule because' || return 1
+  printf '%s\n' "$output" | grep -qF "10,000"                  || return 1
+}
+
 @test "suggest prompt lists DIFFERENTIATORS placeholder marker" {
   # "what sets this project apart" wraps across two lines in the prompt;
   # assert the left half which is line-complete.
