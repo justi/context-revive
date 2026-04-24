@@ -13,12 +13,17 @@ Installed via `curl | bash` into `~/.local/bin/revive`.
 
 ## Design anchors (read before changing behavior)
 
-- Brief output <1500 chars, <10ms, **zero LLM calls on the hot path**.
+- Brief output <1800 chars, <100ms, **zero LLM calls on the hot path**.
 - Two-layer format: STATIC (user-edited `.revive/static.md`) + DYNAMIC
   (regenerated per refresh from `git` + filesystem).
-- Cadence: every 5 prompts, or >10 min gap, or after `/compact` detected.
+- Cadence: every 5 prompts, or >10 min gap. (`/compact` detection trigger
+  is deferred — tracked as an open question, not yet implemented.)
 - Hook failures must be silent — Claude Code session continues without brief.
   Log to `~/.context-revive/hook.log`.
+- **Inject only what the agent can't re-derive from code.** 2026 research on
+  context engineering (AGENTS.md / Zylos substrate-projection / Augment Code)
+  is explicit: auto-generated architecture overviews, directory trees, and
+  dependency graphs reduce agent success rate. Stay with non-inferable facts.
 
 See local `adr/` (private during early development) for full rationale.
 
@@ -36,14 +41,17 @@ on every dev machine.
 
 ## Scope discipline
 
-Not in v1 (explicitly deferred):
+Not in v1 (explicitly deferred or deliberately rejected):
 - tree-sitter or any language-aware parsing (regex + filename heuristics)
 - per-fact provenance / scan_hash
 - cross-project knowledge graph
 - adaptive cadence / telemetry
-- LLM-assisted init (`--with-llm`) — optional v1.5
+- LLM-assisted init (`--with-llm`) — optional future
+- **Auto-generated architecture / directory tree / dependency graph** —
+  **rejected** based on 2026 research (reduces agent success rate; see
+  README "Design — what goes in the brief, and why"). Do not add.
 
-Push back if asked to add these before v1 ships.
+Push back if asked to add these.
 
 ## Conventions
 

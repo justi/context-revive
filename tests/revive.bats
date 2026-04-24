@@ -248,14 +248,285 @@ teardown() {
   [ "$count" -le 5 ]
 }
 
-@test "brief stays under 1500 chars even with rich history" {
+# ------------------- PURPOSE chain (v0.1.2) ----------------------------
+
+@test "purpose chain: pyproject description wins over README" {
+  cat > pyproject.toml <<'EOF'
+[project]
+name = "example"
+description = "A Python thing from pyproject"
+version = "0.0.1"
+EOF
+  echo "this should lose" > README.md
+  run "$REVIVE" init
+  run cat .revive/static.md
+  [[ "$output" == *"A Python thing from pyproject"* ]]
+  [[ "$output" != *"this should lose"* ]]
+}
+
+@test "purpose chain: package.json description wins over README" {
+  printf '{"name":"x","description":"A Node thing from package.json"}\n' > package.json
+  echo "loser" > README.md
+  run "$REVIVE" init
+  run cat .revive/static.md
+  [[ "$output" == *"A Node thing from package.json"* ]]
+}
+
+@test "purpose chain: Cargo.toml description wins over README" {
+  cat > Cargo.toml <<'EOF'
+[package]
+name = "x"
+description = "A Rust thing from Cargo"
+version = "0.1.0"
+EOF
+  echo "loser" > README.md
+  run "$REVIVE" init
+  run cat .revive/static.md
+  [[ "$output" == *"A Rust thing from Cargo"* ]]
+}
+
+@test "purpose chain: gemspec summary wins over README" {
+  cat > example.gemspec <<'EOF'
+Gem::Specification.new do |s|
+  s.name    = "example"
+  s.summary = "A gem from the gemspec"
+end
+EOF
+  echo "loser" > README.md
+  run "$REVIVE" init
+  run cat .revive/static.md
+  [[ "$output" == *"A gem from the gemspec"* ]]
+}
+
+@test "purpose chain: composer.json description wins over README" {
+  printf '{"name":"x","description":"PHP thing from composer"}\n' > composer.json
+  echo "loser" > README.md
+  run "$REVIVE" init
+  run cat .revive/static.md
+  [[ "$output" == *"PHP thing from composer"* ]]
+}
+
+# Codex P2: wrapped CLAUDE.md paragraphs were truncated to the first line.
+@test "purpose chain: CLAUDE.md captures hard-wrapped paragraph across lines" {
+  cat > CLAUDE.md <<'EOF'
+# Project
+
+## What this project is
+
+This is a description that spans across
+multiple lines because the author wrapped at
+80 columns, and all three lines matter.
+
+## Something else
+EOF
+  run "$REVIVE" init
+  run cat .revive/static.md
+  [[ "$output" == *"spans across multiple lines"* ]]
+  [[ "$output" == *"all three lines matter"* ]]
+}
+
+# Codex P3: gemspec sed stripped interior apostrophes of double-quoted strings.
+@test "purpose chain: gemspec preserves apostrophes inside double-quoted summary" {
+  cat > example.gemspec <<'EOF'
+Gem::Specification.new do |s|
+  s.name    = "example"
+  s.summary = "It's a Ruby gem that's useful"
+end
+EOF
+  run "$REVIVE" init
+  run cat .revive/static.md
+  [[ "$output" == *"It's a Ruby gem that's useful"* ]]
+}
+
+@test "purpose chain: gemspec with single-quoted summary still works" {
+  cat > example.gemspec <<'EOF'
+Gem::Specification.new do |s|
+  s.name    = "example"
+  s.summary = 'Single-quoted summary here'
+end
+EOF
+  run "$REVIVE" init
+  run cat .revive/static.md
+  [[ "$output" == *"Single-quoted summary here"* ]]
+}
+
+# Codex P2: composer.json fallback path when jq unavailable or fails.
+@test "purpose chain: composer.json extraction works via grep fallback" {
+  printf '{"name":"acme/widget","description":"Composer grep-path description","require":{}}\n' > composer.json
+  # Shim jq to simulate unavailable/broken. command -v will still find it,
+  # so we also have the in-function behavior of treating empty jq output as
+  # "try grep fallback".
+  mkdir -p "$WORKDIR/shim"
+  cat > "$WORKDIR/shim/jq" <<'EOF'
+#!/usr/bin/env bash
+# always return empty to force the grep fallback
+exit 0
+EOF
+  chmod +x "$WORKDIR/shim/jq"
+  PATH="$WORKDIR/shim:$PATH" "$REVIVE" init
+  run cat .revive/static.md
+  [[ "$output" == *"Composer grep-path description"* ]]
+}
+
+@test "purpose chain: CLAUDE.md 'What this project is' wins over README" {
+  cat > CLAUDE.md <<'EOF'
+# Project
+
+## What this project is
+
+A tool that does the thing agents need.
+
+## Something else
+EOF
+  echo "loser" > README.md
+  run "$REVIVE" init
+  run cat .revive/static.md
+  [[ "$output" == *"A tool that does the thing agents need"* ]]
+}
+
+@test "purpose chain: README filter strips blockquote markers" {
+  cat > README.md <<'EOF'
+# Title
+
+> This is the real description, inside a blockquote.
+EOF
+  run "$REVIVE" init
+  run cat .revive/static.md
+  [[ "$output" == *"This is the real description"* ]]
+  [[ "$output" != *"> This"* ]]
+}
+
+@test "purpose chain: README filter strips horizontal rulers and badges" {
+  cat > README.md <<'EOF'
+# Title
+
+[![Build](https://img.shields.io/badge/build-passing-green)](https://example.com)
+─────────────────────────
+
+Real purpose sentence here.
+EOF
+  run "$REVIVE" init
+  run cat .revive/static.md
+  [[ "$output" == *"Real purpose sentence here"* ]]
+  [[ "$output" != *"────"* ]]
+  [[ "$output" != *"shields.io"* ]]
+}
+
+@test "purpose chain: README filter strips bullet-link-only lines" {
+  cat > README.md <<'EOF'
+# Title
+
+First real sentence here.
+- [CLAUDE.md](/path/to/CLAUDE.md) — irrelevant nav link
+EOF
+  run "$REVIVE" init
+  run cat .revive/static.md
+  [[ "$output" == *"First real sentence here"* ]]
+  [[ "$output" != *"CLAUDE.md"* ]]
+}
+
+@test "purpose chain: placeholder when no sources exist" {
+  # workdir already has no manifest files from setup
+  run "$REVIVE" init
+  run cat .revive/static.md
+  [[ "$output" == *"describe this project"* ]]
+}
+
+# ------------------- COMMANDS section (v0.1.2) -------------------------
+
+@test "commands: user override .revive/commands.md wins" {
+  mkdir -p .revive
+  cat > .revive/commands.md <<'EOF'
+test: bin/override-test
+lint: bin/override-lint
+EOF
+  # even with a competing package.json present
+  printf '{"scripts":{"test":"jest"}}\n' > package.json
+  run "$REVIVE" show
+  [[ "$output" == *"COMMANDS:"* ]]
+  [[ "$output" == *"bin/override-test"* ]]
+  [[ "$output" != *"jest"* ]]
+}
+
+@test "commands: extracted from package.json scripts" {
+  printf '{"scripts":{"test":"vitest","lint":"eslint .","build":"tsc"}}\n' > package.json
+  run "$REVIVE" show
+  [[ "$output" == *"COMMANDS:"* ]]
+  [[ "$output" == *"test: vitest"* ]]
+  [[ "$output" == *"lint: eslint ."* ]]
+  [[ "$output" == *"build: tsc"* ]]
+}
+
+@test "commands: Rails bin/* wins over package.json when Gemfile present" {
+  echo 'source "https://rubygems.org"' > Gemfile
+  mkdir -p bin
+  printf '#!/bin/sh\nexec bin/rails server "$@"\n' > bin/dev
+  printf '#!/bin/sh\nexec rspec "$@"\n' > bin/rspec
+  chmod +x bin/dev bin/rspec
+  printf '{"scripts":{"test":"vitest"}}\n' > package.json
+  run "$REVIVE" show
+  [[ "$output" == *"run: bin/dev"* ]]
+  [[ "$output" == *"test: bin/rspec"* ]]
+  [[ "$output" != *"vitest"* ]]
+}
+
+@test "commands: Makefile targets extracted when no manifest" {
+  cat > Makefile <<'EOF'
+test:
+	go test ./...
+
+lint:
+	golangci-lint run
+EOF
+  run "$REVIVE" show
+  [[ "$output" == *"COMMANDS:"* ]]
+  [[ "$output" == *"test: make test"* ]]
+  [[ "$output" == *"lint: make lint"* ]]
+}
+
+@test "commands: section omitted entirely when no sources found" {
+  # empty workdir has no Gemfile, package.json, Makefile, bin/*
+  run "$REVIVE" show
+  [[ "$output" != *"COMMANDS:"* ]]
+  [[ "$output" != *"(no commands"* ]]
+}
+
+# ------------------- STATIC placeholder-skip (v0.1.2) ------------------
+
+@test "static placeholder INVARIANTS/GOTCHAS bullets are suppressed" {
+  "$REVIVE" init
+  run "$REVIVE" show
+  [[ "$output" == *"INVARIANTS:"* ]]
+  [[ "$output" == *"GOTCHAS:"* ]]
+  # but the "(edit this file)" placeholder bullets must not leak into the brief
+  [[ "$output" != *"edit this file"* ]]
+}
+
+@test "static keeps non-placeholder bullets intact" {
+  mkdir -p .revive
+  cat > .revive/static.md <<'EOF'
+PURPOSE: Real purpose here.
+INVARIANTS:
+  - Never commit to main directly.
+  - Always run tests before pushing.
+GOTCHAS:
+  - Rate limit is 100 req/min.
+EOF
+  run "$REVIVE" show
+  [[ "$output" == *"Never commit to main directly"* ]]
+  [[ "$output" == *"Rate limit is 100 req/min"* ]]
+}
+
+# ------------------- misc ---------------------------------------------
+
+@test "brief stays under 1800 chars even with rich history" {
   for i in $(seq 1 15); do
     echo "$i" > "file$i.rb"
     git add "file$i.rb"
     git commit -qm "add file$i with a reasonably descriptive commit message"
   done
   run "$REVIVE" show
-  [ "${#output}" -lt 1500 ]
+  [ "${#output}" -lt 1800 ]
 }
 
 @test "show reports git branch in STATE" {
@@ -263,11 +534,11 @@ teardown() {
   [[ "$output" == *"branch="* ]]
 }
 
-@test "brief stays under 1500-char budget on minimal repo" {
+@test "brief stays under 1800-char budget on minimal repo" {
   run "$REVIVE" show
   # show prints budget line to stderr; the brief is stdout
   local brief_len=${#output}
-  [ "$brief_len" -lt 1500 ]
+  [ "$brief_len" -lt 1800 ]
 }
 
 # --- init ---
