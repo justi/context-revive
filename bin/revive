@@ -3,7 +3,7 @@
 # https://github.com/justi/context-revive
 set -euo pipefail
 
-VERSION="0.1.4"
+VERSION="0.1.5"
 STATIC_FILE=".revive/static.md"
 COMMANDS_FILE=".revive/commands.md"
 BRIEF_CHAR_BUDGET=1800
@@ -545,15 +545,15 @@ cmd_suggest() {
       | awk '{$1=""; sub(/^ /,""); print}' || true)
   fi
 
+  # Meta-comments go to stderr so `revive suggest | pbcopy` lands a clean
+  # prompt in the clipboard, not our framing.
+  cat >&2 <<'PROMPT_META'
+# Pipe this to your clipboard: `revive suggest | pbcopy` (macOS).
+# Then paste into your current Claude Code / Cursor / Aider session —
+# the active agent IS the provider. No extra wiring needed.
+PROMPT_META
+
   cat <<'PROMPT_HEADER'
-# Paste the block below into Claude Code / Cursor / Aider / any LLM with
-# file-read access. It will read this project's artefacts and return two
-# ready-to-paste blocks for .revive/static.md.
-#
-# Copy EVERYTHING between the BEGIN / END markers — do not edit.
-
---- BEGIN PROMPT ---
-
 Read the following artefacts in the current project, then generate
 INVARIANTS and GOTCHAS sections for a file at .revive/static.md.
 
@@ -639,11 +639,6 @@ GOTCHAS:
 Show me the output as a plain text block. I will paste it into
 .revive/static.md myself, replacing the existing INVARIANTS: and
 GOTCHAS: sections (leave PURPOSE untouched).
-
---- END PROMPT ---
-
-# Tip: `revive suggest | pbcopy` on macOS puts it straight into the
-# clipboard, ready to paste into your agent of choice.
 PROMPT_BODY
 }
 
