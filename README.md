@@ -128,17 +128,60 @@ Lighter alternative: `revive init --force` regenerates only PURPOSE
 (from the current chain) and preserves any user-edited
 DIFFERENTIATORS / INVARIANTS / GOTCHAS.
 
-## Brief format
+## What `.revive/static.md` looks like
+
+The file you edit (either directly, or through `revive suggest` +
+`revive audit`) lives at `.revive/static.md` in the repo. Four
+sections, flat text, no wrapper:
+
+```
+PURPOSE: <single 2-3 sentence summary — what + business goal + hard constraint>
+DIFFERENTIATORS:
+  - <alternative> → <our choice / rationale>
+  - <...>
+INVARIANTS:
+  - <rule whose breakage causes non-obvious damage>
+  - <...>
+GOTCHAS:
+  - <landmine whose fix isn't obvious from code alone>
+  - <...>
+```
+
+Real example from a dogfooded repo (abridged — real files often run
+12+ INVARIANTS and 6+ GOTCHAS):
+
+```
+PURPOSE: Shell-script CLI that re-injects a dense project brief
+into Claude Code via UserPromptSubmit hook. Success metric: agents
+stop asking questions CLAUDE.md already answered. Bash-only, zero-
+LLM on the hot path — works on any dev machine.
+DIFFERENTIATORS:
+  - repomix / code2prompt one-shot dump → revive injects small briefs on a cadence counter
+  - Static Cursor Rules / CLAUDE.md prepend → revive regenerates DYNAMIC from git + fs per emit
+  - Provider-locked tools (Cursor Background Agents) → paste workflow works with any agent
+INVARIANTS:
+  - Hot path (refresh) must be zero-LLM, <100ms, <10k chars (hook cap)
+  - Hook failures stay silent; log to ~/.context-revive/hook.log
+  - `suggest` and `audit` are separate LLM calls — never bundle generation + critique
+GOTCHAS:
+  - `set -euo pipefail` + silent-failure: `cmd_refresh` must `set +e` internally
+  - bats-core fails only on LAST command exit — intermediate `[[ ]]` asserts need `|| return 1`
+```
+
+The file is checked in. It's the human-curated source of truth;
+`revive show` assembles the brief around it each refresh.
+
+## Brief format (what Claude Code actually receives)
+
+Per emit, the hook streams this block to Claude Code as a
+`<system-reminder>`:
 
 ```
 <revive refresh="N">
-# STATIC  (rarely changes — human-curated via `revive suggest`)
-PURPOSE          what + business goal + hard constraint (2-3 sentences)
-DIFFERENTIATORS  alternatives → our choice / rationale
-INVARIANTS       rules whose breakage causes non-obvious damage
-GOTCHAS          landmines whose fix isn't obvious from code alone
+# STATIC  (read directly from .revive/static.md)
+PURPOSE, DIFFERENTIATORS, INVARIANTS, GOTCHAS
 
-# DYNAMIC (regenerated per refresh)
+# DYNAMIC (regenerated per refresh from git + fs)
 STATE      last 3 commits + active branch; fix/feat commits also
            surface the first paragraph of their body (PR description
            for squash-merge workflows)
@@ -150,6 +193,58 @@ COMMANDS   exact test/lint/build/dev/setup scripts (from package.json
            / Gemfile + bin/* / Makefile, or .revive/commands.md override)
 </revive>
 ```
+
+`N` is the refresh counter stored at `.claude/revive-counter`.
+Placeholder-only sections (INVARIANTS that still says "edit this
+file") are omitted entirely — they'd be pure noise in the agent's
+context.
+
+## How often the brief is injected
+
+Every call to the `UserPromptSubmit` hook passes through a cadence
+gate in `revive refresh`. The brief emits when ANY of these is true:
+
+1. **First prompt of the session** (counter = 1).
+2. **Every 5th prompt after that** (5, 10, 15, …), controlled by
+   `REVIVE_REFRESH_EVERY` (default `5`).
+3. **Gap of >10 minutes** since the last emit, regardless of
+   counter, controlled by `REVIVE_REFRESH_TIME_GAP` (default `600`
+   seconds). Picks up where the last session left off after a break.
+
+Prompts between emits see NOTHING from revive — silent skip,
+zero token cost. This is deliberate: brief repeats on every prompt
+would burn tokens and desensitize the agent to the content.
+
+Adjust the cadence per shell:
+
+```bash
+export REVIVE_REFRESH_EVERY=3        # every 3rd prompt instead of 5th
+export REVIVE_REFRESH_TIME_GAP=300   # 5-minute gap threshold
+```
+
+## Token cost in practice
+
+Measured on a rich-architecture project (Python + Streamlit + 19
+ADRs, `.revive/static.md` ≈ 4 KB with 12 INVARIANTS, 8 GOTCHAS):
+
+- **Brief per emit:** ~2–3k tokens (Polish/English mix with
+  unicode glyphs runs ~2.5 chars/token; English-only repos land
+  closer to ~1.5k).
+- **Emit every 5 prompts.** In a 30-prompt session that's 6 emits
+  × ~2.5k = **~15k tokens total** across the session.
+- **Fraction of Opus 4.7 1M context:** ~1.5% per session.
+- **Claude Code hook hard limit:** 10k chars per emit; revive stays
+  well under (our biggest observed brief is ~4.3 KB / ~1.7k tokens).
+
+Compare to a static CLAUDE.md loaded once at session start (say
+2.7k tokens): equal or cheaper for short sessions, ~3× for long
+ones — but survives AutoCompact. The whole point of revive is that
+the agent's attention on these facts doesn't degrade as tokens
+drift out of the window.
+
+Measure in your own session with Claude Code's `/context` command
+before and after sending a prompt (which triggers the hook). The
+delta in the `Messages` bucket = the emit cost.
 
 ## Design — what goes in the brief, and why
 
@@ -210,13 +305,15 @@ maps cleanly: `STATIC` is the cacheable prefix (one human-curated
 file per project), `DYNAMIC` is the fresh suffix regenerated every
 emit.
 
-### Refresh cadence
+### Complementary to AutoCompact, not competing
 
-Emit every 5 prompts OR >10 minutes gap OR first call of the
-session. This is complementary to Anthropic's AutoCompact (which
-fires at context-window ceiling): we address **context rot** —
-the agent forgetting as tokens drift out of attention — which
-happens long before AutoCompact triggers.
+Anthropic's AutoCompact fires when the context window approaches its
+ceiling — it summarises the conversation to make room. revive
+addresses a different failure: **context rot**, where the agent
+forgets as tokens drift out of attention long before AutoCompact
+triggers. Cadence-based re-injection keeps key facts in the recent
+window. See the "How often the brief is injected" and "Token cost
+in practice" sections above for the exact mechanics and cost.
 
 [augment]: https://www.augmentcode.com/guides/how-to-build-agents-md
 [zylos]: https://zylos.ai/research/2026-03-17-dynamic-context-assembly-projection-llm-agent-runtimes
