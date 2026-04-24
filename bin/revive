@@ -3,7 +3,7 @@
 # https://github.com/justi/context-revive
 set -euo pipefail
 
-VERSION="0.1.15"
+VERSION="0.1.16"
 STATIC_FILE=".revive/static.md"
 COMMANDS_FILE=".revive/commands.md"
 BRIEF_CHAR_BUDGET=2200
@@ -702,8 +702,10 @@ cmd_suggest() {
   # prompt in the clipboard, not our framing.
   cat >&2 <<'PROMPT_META'
 # Paste this prompt into your current Claude Code / Cursor / Aider session.
-# The agent will read your project files, generate PURPOSE + INVARIANTS +
-# GOTCHAS, preview them, then edit .revive/static.md for you — end-to-end.
+# The agent will: (1) preview PURPOSE + DIFFERENTIATORS + INVARIANTS +
+# GOTCHAS, (2) edit .revive/static.md in place, (3) audit the result
+# against a checklist of commonly-missed non-inferable facts and
+# propose additional bullets if it finds any.
 #
 # Pipe to clipboard: `revive suggest | pbcopy` (macOS).
 # Requires: .revive/static.md must already exist (run `revive init` first).
@@ -916,6 +918,52 @@ Do two things, in order — do NOT stop after step 1:
   After step 2, confirm with a one-line summary of which sections
   were rewritten and which were preserved, plus the final line
   count of .revive/static.md.
+
+  STEP 3 — Audit pass (STATIC only). Re-read the updated
+  .revive/static.md and scan the project one more time for
+  commonly-missed classes of non-inferable facts. You MAY consult
+  DYNAMIC sections (HOT_FILES, STATE, commit history) as signal —
+  but DYNAMIC regenerates every refresh, so do NOT try to capture
+  its content into STATIC. Only STATIC sections (PURPOSE,
+  DIFFERENTIATORS, INVARIANTS, GOTCHAS) are editable in this step.
+
+  Checklist — for each category, does the current STATIC already
+  cover it? If not, is there real signal in the artefacts that
+  should land in one of the four STATIC sections?
+
+    1. Toolchain specifics — exact invocations that differ from
+       convention (e.g. `.venv/bin/python -m pytest` instead of
+       `pytest`, `bundle exec rspec`, a custom launcher in `bin/`,
+       non-default test/lint flags listed in CLAUDE.md).
+    2. Agent skill / knowledge-file discipline — if the project
+       has `.claude/skills/*.md`, `.cursor/rules/*.md`,
+       `docs/agents/*.md`, or any other "read this before writing
+       X" convention, that's a mandatory INVARIANT.
+    3. Workflow dichotomies — pairs of commands where picking the
+       wrong one causes silent drift (e.g. "X runs incremental,
+       Y runs full rebuild"; "dev vs prod migrate"; "scan vs
+       start"). Agent misuse of one for the other = debug-hours.
+    4. Privacy / OpSec — data that must NOT leak into public
+       content (real paths, hours, customer/project names,
+       credentials, gitignored artefacts).
+    5. Cross-ADR process rules — panel-review requirements,
+       pre-commit rituals, decision-journal hooks, ADRs that
+       supersede earlier ones (e.g. "ADR X is Proposed, superseded
+       by ADR Y"), cross-module contracts.
+    6. Convention collisions — shared labels across files/sections
+       that collide (e.g. "M1 in commits = PLAN.md §8, not §5").
+
+  For each gap found: print a one-line rationale with a specific
+  artefact reference, AND a proposed bullet in the format of the
+  target section (PURPOSE / DIFFERENTIATORS / INVARIANTS /
+  GOTCHAS).
+
+  Then ask: "Add these N bullets to .revive/static.md? (y/n)".
+  Only extend the file if I say yes.
+
+  If you find zero substantive gaps, say exactly "Audit: no gaps
+  found." and stop — do NOT pad with marginal findings to look
+  busy.
 
 If .revive/static.md does not exist, stop and tell me to run
 `revive init` first — do NOT create it from scratch (PURPOSE
