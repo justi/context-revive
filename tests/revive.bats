@@ -97,9 +97,9 @@ teardown() {
   run cat .revive/static.md
   local purpose_line
   purpose_line=$(printf '%s\n' "$output" | grep '^PURPOSE:' || true)
-  # PURPOSE: prefix (9 chars) + 400 chars of X → 409-char line
-  [ "${#purpose_line}" -le 410 ] || return 1
-  [ "${#purpose_line}" -ge 400 ] || return 1
+  # Exact expected length: "PURPOSE: " (9 chars) + 400 chars of X = 409.
+  # Tight bounds catch off-by-one in the cap (Copilot review).
+  [ "${#purpose_line}" -eq 409 ] || return 1
 }
 
 @test "purpose: short PURPOSE stays untouched by cap" {
