@@ -34,45 +34,49 @@ them.
 
 ## Example
 
-After `revive init` + `revive suggest` on a real repo (armillary, 19 ADRs),
-Claude Code's `UserPromptSubmit` hook receives this on every 5th prompt:
+After `revive init` + `revive suggest` on a repo with a handful of ADRs and
+a detailed `CLAUDE.md`, Claude Code's `UserPromptSubmit` hook receives a
+block like this on every 5th prompt (generic illustration — your content
+and numbers will differ):
 
 ```
 <revive refresh="7">
 # STATIC  (from .revive/static.md — human-curated, stable across refreshes)
-PURPOSE: Local-first memory layer for solo devs carrying 50-200 git repos.
-Success metric is DORMANT→ACTIVE transitions (ADR 0025), not MRR —
-deliberately open-source, SQLite-only, no cloud.
+PURPOSE: Background-job scheduler for small Go services. Success metric is
+zero surprise job failures after a deploy — goal: replace ops-managed cron
+with code-defined schedules that survive rollouts. Constraint: job state
+lives in the app's own Postgres; no new infrastructure.
 
 DIFFERENTIATORS:
-  - Pure activity ranking tools → ranks for revival value, not recency (ADR 0008)
-  - Embeddings / semantic retrieval → ripgrep-only Steal v1, 40-line windows (ADR 0027)
+  - Traditional cron → schedules defined in code, survive deploys
+  - Managed SaaS schedulers → zero new infrastructure; reuses app Postgres
+  - Temporal / DAG workflow engines → single-step jobs only; keep it small
 
 INVARIANTS:
-  - No migrations: bump PRAGMA user_version → drop + rebuild (ADR 0004). Never ALTER TABLE.
-  - Services never `import streamlit`; must be importable + testable without it (ADR 0001 rules 2, 8)
-  - Classification heuristics require panel review (Pieter/Marc/Arvid/Harry) BEFORE code.
+  - Every schedule change ships with a migration; never edit rows in prod.
+  - Jobs must be idempotent — retries on deploy-overlap are expected.
+  - Worker binary must not grow past 30 MB (embedded-device deploy target).
 
 GOTCHAS:
-  - CI runs `ruff format --check`; local `ruff check .` passes while CI fails — run BOTH.
-  - `~/Projects_new/` is auto-generated; v2/v3/v4 patterns there are NOT user behavior.
+  - `make test` runs integration against a real Postgres — set TEST_DATABASE_URL.
+  - `bin/deploy` always runs `schedule:apply` last; reordering breaks overlap detection.
 
 # DYNAMIC  (regenerated per refresh from git + fs)
 STATE: branch=main
-  a3c09e6 feat: implement ADR 0027 Steal — cross-repo ranked code retrieval
-      ↪ Ripgrep-only v1 per panel review: 40-line windows, two ranking signals…
-  e4fe8d4 refactor: split 5 oversized modules under 400-line target (#32)
+  9e8a1f2 fix(scheduler): handle DST transitions in cron parser
+      ↪ Cron parser was skipping jobs during spring-forward. Added unit tests for …
+  c4b2d30 feat: add schedule:diff command for deploy previews
 
 HOT_FILES: (last 20 commits, last change shown)
-  11× README.md       ↪ "docs: add docs/mcp.md — MCP runtime reference"
-   3× cli.py          ↪ "refactor: split 5 oversized modules under 400-line target"
-   3× detail.py       ↪ "refactor: split 5 oversized modules under 400-line target"
+  12× internal/scheduler/parser.go  ↪ "fix(scheduler): handle DST transitions in cron parser"
+   8× cmd/worker/main.go            ↪ "feat: add schedule:diff command for deploy previews"
+   5× internal/db/schema.sql        ↪ "chore: add index on next_run_at"
 </revive>
 ```
 
-Ask this Claude Code: *"What's the success metric for this project?"* — the
-agent answers *"DORMANT→ACTIVE transitions (ADR 0025), not MRR"* straight
-from the brief, not by re-reading files. 30 prompts in, 100 prompts in, the
+Ask this Claude Code *"what's the success metric for this project?"* — the
+agent answers *"zero surprise job failures after a deploy"* straight from
+the brief, not by re-reading files. 30 prompts in, 100 prompts in, the
 answer stays.
 
 ## Quick start
