@@ -16,7 +16,8 @@ Installed via `curl | bash` into `~/.local/bin/revive`.
 - Brief output <1800 chars, <100ms, **zero LLM calls on the hot path**.
 - Two-layer format: STATIC (user-edited `.revive/static.md`) + DYNAMIC
   (regenerated per refresh from `git` + filesystem).
-- Cadence: every 5 prompts, or >10 min gap, or after `/compact` detected.
+- Cadence: every 5 prompts, or >10 min gap. (`/compact` detection trigger
+  is deferred — tracked as an open question, not yet implemented.)
 - Hook failures must be silent — Claude Code session continues without brief.
   Log to `~/.context-revive/hook.log`.
 - **Inject only what the agent can't re-derive from code.** 2026 research on

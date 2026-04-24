@@ -11,7 +11,9 @@ re-injects it into the session on a fixed cadence — the Anthropic
 pattern called **structured note-taking**, wired through the
 `UserPromptSubmit` hook.
 
-One bash script. Zero runtime. No Python, no Node, no binary.
+One bash script. Zero runtime dependencies on the hot path — the
+`refresh` hook calls only `bash` and `git`. No Python, no Node, no
+compiled binary.
 
 ## Install
 
@@ -19,8 +21,12 @@ One bash script. Zero runtime. No Python, no Node, no binary.
 curl -fsSL https://raw.githubusercontent.com/justi/context-revive/main/install.sh | bash
 ```
 
-Requires: `bash`, `git`, `jq` (only for `install-hook`), `gh`
-(optional — only for best-quality PURPOSE extraction).
+Requires:
+
+- **Hot path (every refresh):** `bash`, `git`. Nothing else.
+- **One-off setup:** `jq` for `revive install-hook`; `gh` is optional
+  for best-quality PURPOSE extraction during `revive init`. Both are
+  used once, never from the hook.
 
 ## Quick start
 
