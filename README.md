@@ -15,6 +15,13 @@ One bash script. Zero runtime dependencies on the hot path — the
 `refresh` hook calls only `bash` and `git`. No Python, no Node, no
 compiled binary.
 
+**What it is:** a standalone CLI tool, not a plugin — it runs as a
+separate process. Claude Code gets first-class integration via the
+`UserPromptSubmit` hook (installed by `revive install-hook`). Other
+agents (Cursor, Aider, any chat LLM with file access) use the same
+brief via paste: `revive show | pbcopy`, `revive suggest | pbcopy`,
+`revive audit | pbcopy`.
+
 ## Install
 
 ```bash
@@ -27,6 +34,31 @@ Requires:
 - **One-off setup:** `jq` for `revive install-hook`; `gh` is optional
   for best-quality PURPOSE extraction during `revive init`. Both are
   used once, never from the hook.
+
+### Upgrade to a new version
+
+Re-run the install script. It fetches the latest `bin/revive`
+from `main` and writes over `~/.local/bin/revive`. Your per-project
+`.revive/static.md` files and Claude Code hook settings are NOT
+touched:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/justi/context-revive/main/install.sh | bash
+revive version   # confirm you got the new tag
+```
+
+If a new version changes the shape of the brief (new section,
+renamed field), you may want to regenerate your static file too:
+
+```bash
+cd your-project
+revive init --force       # regenerate PURPOSE; preserve DIFFERENTIATORS / INVARIANTS / GOTCHAS
+# OR (full reset):
+rm -rf .revive && revive init && revive suggest | pbcopy
+```
+
+The release notes on GitHub flag when a version adds new sections
+or changes behavior that warrants regenerating.
 
 ## Quick start
 
