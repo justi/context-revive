@@ -695,6 +695,47 @@ Genuine first paragraph of the PR body."
   [[ "$body_line" != *"Delete this template"* ]]            || return 1
 }
 
+# Codex P2 on v0.1.10: lines with prose + inline HTML comment were being
+# dropped entirely. Strip only the comment, preserve the content.
+@test "state: inline HTML comment stripped, prose on same line preserved" {
+  echo k > k.txt
+  git add k.txt
+  git commit -q -m "fix: closes issue" -m "Fix parser crash on empty input <!-- closes #42 -->
+
+Second paragraph should not leak."
+  run "$REVIVE" show
+  local body_line
+  body_line=$(printf '%s\n' "$output" | grep '↪' | head -1)
+  [[ "$body_line" == *"Fix parser crash on empty input"* ]] || return 1
+  [[ "$body_line" != *"<!--"* ]]                             || return 1
+  [[ "$body_line" != *"closes #42"* ]]                       || return 1
+  [[ "$body_line" != *"Second paragraph"* ]]                 || return 1
+}
+
+@test "state: leading inline HTML comment stripped, trailing prose kept" {
+  echo l > l.txt
+  git add l.txt
+  git commit -q -m "fix: with leading comment" -m "<!-- note --> Real rationale text here."
+  run "$REVIVE" show
+  local body_line
+  body_line=$(printf '%s\n' "$output" | grep '↪' | head -1)
+  [[ "$body_line" == *"Real rationale text here."* ]] || return 1
+  [[ "$body_line" != *"<!--"* ]]                      || return 1
+}
+
+@test "state: multiple inline HTML comments all stripped within one line" {
+  echo m > m.txt
+  git add m.txt
+  git commit -q -m "fix: many inline comments" -m "First <!-- a --> then <!-- b --> last bit."
+  run "$REVIVE" show
+  local body_line
+  body_line=$(printf '%s\n' "$output" | grep '↪' | head -1)
+  [[ "$body_line" == *"First"* ]]         || return 1
+  [[ "$body_line" == *"then"* ]]          || return 1
+  [[ "$body_line" == *"last bit."* ]]     || return 1
+  [[ "$body_line" != *"<!--"* ]]          || return 1
+}
+
 @test "state: body excerpt is empty when body is only template (no real content)" {
   echo w > onlytmpl.txt
   git add onlytmpl.txt

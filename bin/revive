@@ -3,7 +3,7 @@
 # https://github.com/justi/context-revive
 set -euo pipefail
 
-VERSION="0.1.10"
+VERSION="0.1.11"
 STATIC_FILE=".revive/static.md"
 COMMANDS_FILE=".revive/commands.md"
 BRIEF_CHAR_BUDGET=2200
@@ -60,31 +60,41 @@ commit_body_excerpt() {
   body=$(git log -1 --pretty=%b "$sha" 2>/dev/null) || return 1
   [[ -n "$body" ]] || return 1
   # Skip leading template boilerplate before picking the first real
-  # paragraph. Specifically: markdown headings (`## Summary` etc.),
-  # single- or multi-line HTML comments (`<!-- ... -->`) that GitHub PR
-  # templates insert. Without this, squash-merge bodies generated from
-  # PR templates surface the heading instead of the actual rationale.
+  # paragraph. Strip HTML comments (including multi-line blocks AND
+  # inline comments on the same line as prose, so that lines like
+  # `Fix crash <!-- closes #42 -->` keep their content), and drop
+  # markdown atx headings (`## Summary` etc.) that GitHub PR templates
+  # insert. Without this, squash-merge bodies built from PR templates
+  # either surface the heading itself or drop content-bearing lines.
   local para
   para=$(awk '
     BEGIN { p = ""; in_para = 0; in_comment = 0 }
-    # multi-line HTML comment block — consume until closing marker
+    # Finish a multi-line HTML comment block that opened on an earlier line.
     in_comment {
-      if (/-->/) in_comment = 0
-      next
+      idx = index($0, "-->")
+      if (idx == 0) next                      # still fully inside
+      $0 = substr($0, idx + 3)                # keep remainder after -->
+      in_comment = 0
     }
-    /<!--/ {
-      # open of HTML comment; may also close on same line
-      if (!/-->/) in_comment = 1
-      next
+    # Strip all balanced inline <!-- ... --> pairs on this line.
+    { while (match($0, /<!--[^>]*-->/)) $0 = substr($0, 1, RSTART - 1) substr($0, RSTART + RLENGTH) }
+    # Unclosed opener: drop everything from <!-- onward; resume on next line.
+    {
+      if (match($0, /<!--/)) {
+        $0 = substr($0, 1, RSTART - 1)
+        in_comment = 1
+      }
     }
-    # markdown headings (atx style) — skip
+    # Markdown atx headings — whole line is template, skip.
     /^#+[[:space:]]/ { next }
-    # blank line: end of first real paragraph, or keep skipping prefix
-    /^$/ {
+    # Normalize whitespace before deciding blank vs content.
+    { sub(/^[[:space:]]+/, ""); sub(/[[:space:]]+$/, "") }
+    # Blank after stripping: end of first real paragraph, or leading gap.
+    $0 == "" {
       if (in_para) exit
       next
     }
-    # real content
+    # Real content
     {
       p = (p == "" ? $0 : p " " $0)
       in_para = 1
