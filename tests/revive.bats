@@ -609,14 +609,23 @@ EOF
   [[ "$output" == *"regenerated"* ]]
 }
 
-@test "suggest prints begin/end markers and core sections" {
+@test "suggest prints core prompt sections on stdout" {
   run "$REVIVE" suggest
   [ "$status" -eq 0 ]
-  [[ "$output" == *"--- BEGIN PROMPT ---"* ]]
-  [[ "$output" == *"--- END PROMPT ---"* ]]
   [[ "$output" == *"INVARIANTS"* ]]
   [[ "$output" == *"GOTCHAS"* ]]
   [[ "$output" == *"non-inferable"* ]]
+  # meta-comments must go to stderr, not stdout — so `| pbcopy` stays clean
+  [[ "$output" != *"Pipe this to your clipboard"* ]]
+  [[ "$output" != *"BEGIN PROMPT"* ]]
+}
+
+@test "suggest prints pipe-to-clipboard hint on stderr only" {
+  local stdout stderr
+  stdout=$("$REVIVE" suggest 2>/dev/null)
+  stderr=$("$REVIVE" suggest 2>&1 >/dev/null)
+  [[ "$stderr" == *"pbcopy"* ]]
+  [[ "$stdout" != *"pbcopy"* ]]
 }
 
 @test "suggest lists CLAUDE.md when present" {
