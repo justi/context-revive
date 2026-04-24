@@ -1020,6 +1020,51 @@ EOF
   printf '%s\n' "$output" | grep -qF 'formal architecture-rules ADR' || return 1
 }
 
+# v0.1.16 — STEP 3 audit pass for STATIC gaps
+@test "suggest prompt defines a STEP 3 audit pass" {
+  run "$REVIVE" suggest
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -qF 'STEP 3 — Audit pass' || return 1
+  printf '%s\n' "$output" | grep -qF 'STATIC only'         || return 1
+}
+
+@test "suggest STEP 3 checklist mentions the common-missed classes" {
+  run "$REVIVE" suggest
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -qF 'Toolchain specifics'       || return 1
+  printf '%s\n' "$output" | grep -qF 'knowledge-file discipline' || return 1
+  printf '%s\n' "$output" | grep -qF 'Workflow dichotomies'      || return 1
+  printf '%s\n' "$output" | grep -qF 'Privacy / OpSec'           || return 1
+  printf '%s\n' "$output" | grep -qF 'Cross-ADR process'         || return 1
+  printf '%s\n' "$output" | grep -qF 'Convention collisions'     || return 1
+}
+
+@test "suggest STEP 3 explicitly preserves DYNAMIC" {
+  # Audit may READ dynamic content but never edit it — dynamic regenerates
+  # every refresh, freezing it into STATIC defeats the purpose. Check
+  # sentinel substrings that are line-complete (prompt wraps at ~72 cols).
+  run "$REVIVE" suggest
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -qF 'DYNAMIC regenerates every refresh' || return 1
+  printf '%s\n' "$output" | grep -qF 'do NOT try to capture'             || return 1
+}
+
+@test "suggest STEP 3 forbids padding with marginal findings" {
+  run "$REVIVE" suggest
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -qF 'Audit: no gaps' || return 1
+  printf '%s\n' "$output" | grep -qF 'marginal'       || return 1
+  printf '%s\n' "$output" | grep -qF 'to look'        || return 1
+}
+
+@test "suggest STEP 3 asks user before extending the file" {
+  # Agent must not silently add bullets — user controls what lands
+  run "$REVIVE" suggest
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -qF 'Add these N bullets'   || return 1
+  printf '%s\n' "$output" | grep -qF 'Only extend the file' || return 1
+}
+
 @test "suggest prompt tells agent not to self-censor for aesthetic reasons" {
   # Aimed at the failure mode where agent caps at 5 INVARIANTS even
   # when the project has 9 canonical rules.
