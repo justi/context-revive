@@ -645,6 +645,70 @@ Line three still same."
   [[ "$body_line" == *"Line one of the paragraph Line two still same paragraph Line three still same."* ]] || return 1
 }
 
+# Codex P2: PR templates start with `## Summary` + blank line; body
+# extractor was returning the heading instead of the actual description.
+@test "state: body extraction skips leading markdown heading (PR template)" {
+  echo t > tpl.txt
+  git add tpl.txt
+  git commit -q -m "feat: with template body" -m "## Summary
+
+Actual description lives below the heading.
+
+## Test Plan
+- [x] one"
+  run "$REVIVE" show
+  local body_line
+  body_line=$(printf '%s\n' "$output" | grep '↪' | head -1)
+  [[ -n "$body_line" ]]                                      || return 1
+  [[ "$body_line" == *"Actual description lives below"* ]]   || return 1
+  [[ "$body_line" != *"## Summary"* ]]                       || return 1
+}
+
+@test "state: body extraction skips leading single-line HTML comment" {
+  echo u > htmlcomment.txt
+  git add htmlcomment.txt
+  git commit -q -m "fix: with html comment" -m "<!-- Closes #42 -->
+
+Real rationale after the HTML comment marker."
+  run "$REVIVE" show
+  local body_line
+  body_line=$(printf '%s\n' "$output" | grep '↪' | head -1)
+  [[ "$body_line" == *"Real rationale after"* ]]  || return 1
+  [[ "$body_line" != *"<!--"* ]]                   || return 1
+  [[ "$body_line" != *"Closes #42"* ]]             || return 1
+}
+
+@test "state: body extraction skips multi-line HTML comment block" {
+  echo v > multi.txt
+  git add multi.txt
+  git commit -q -m "feat: multi-line comment" -m "<!--
+  Please describe the change here.
+  Delete this template before merging.
+-->
+
+Genuine first paragraph of the PR body."
+  run "$REVIVE" show
+  local body_line
+  body_line=$(printf '%s\n' "$output" | grep '↪' | head -1)
+  [[ "$body_line" == *"Genuine first paragraph"* ]]         || return 1
+  [[ "$body_line" != *"Please describe"* ]]                 || return 1
+  [[ "$body_line" != *"Delete this template"* ]]            || return 1
+}
+
+@test "state: body excerpt is empty when body is only template (no real content)" {
+  echo w > onlytmpl.txt
+  git add onlytmpl.txt
+  git commit -q -m "chore: only template" -m "## Summary
+
+## Test Plan"
+  run "$REVIVE" show
+  # The subject line must appear, but no body line should follow it.
+  [[ "$output" == *"chore: only template"* ]] || return 1
+  local next_line
+  next_line=$(printf '%s\n' "$output" | grep -A1 'chore: only template' | tail -1)
+  [[ "$next_line" != *"↪"* ]] || return 1
+}
+
 @test "state: body extraction stops at first blank line (skips trailers)" {
   echo w > j.txt
   git add j.txt
