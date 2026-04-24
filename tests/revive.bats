@@ -554,6 +554,65 @@ EOF
   run "$REVIVE" init
   [ "$status" -eq 1 ]
   [[ "$output" == *"exists"* ]]
+  [[ "$output" == *"--force"* ]]
+}
+
+@test "init --force regenerates PURPOSE from chain" {
+  # seed with a bad PURPOSE like the pre-v0.1.2 naive extractor produced
+  mkdir -p .revive
+  cat > .revive/static.md <<'EOF'
+PURPOSE: ───── old garbage purpose ─────
+INVARIANTS:
+  - (top-5 architectural rules; edit this file)
+GOTCHAS:
+  - (landmines you keep stepping on; edit this file)
+EOF
+  # provide a high-quality source for the chain
+  printf '{"name":"x","description":"Clean new description from package.json"}\n' > package.json
+
+  run "$REVIVE" init --force
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"regenerated"* ]]
+
+  run cat .revive/static.md
+  [[ "$output" == *"Clean new description from package.json"* ]]
+  [[ "$output" != *"old garbage purpose"* ]]
+}
+
+@test "init --force preserves user-edited INVARIANTS and GOTCHAS" {
+  mkdir -p .revive
+  cat > .revive/static.md <<'EOF'
+PURPOSE: old stale purpose
+INVARIANTS:
+  - Never commit secrets.
+  - Always sign commits.
+GOTCHAS:
+  - API rate limit is 10/sec — retry with exponential backoff.
+EOF
+  printf '{"description":"fresh purpose"}\n' > package.json
+
+  run "$REVIVE" init --force
+  [ "$status" -eq 0 ]
+
+  run cat .revive/static.md
+  [[ "$output" == *"fresh purpose"* ]]
+  # user rules must survive
+  [[ "$output" == *"Never commit secrets"* ]]
+  [[ "$output" == *"Always sign commits"* ]]
+  [[ "$output" == *"API rate limit is 10/sec"* ]]
+}
+
+@test "init -f short flag works the same as --force" {
+  "$REVIVE" init
+  run "$REVIVE" init -f
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"regenerated"* ]]
+}
+
+@test "init rejects unknown options" {
+  run "$REVIVE" init --bogus
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"unknown option"* ]]
 }
 
 @test "init uses README.md prose for PURPOSE" {

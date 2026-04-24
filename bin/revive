@@ -3,7 +3,7 @@
 # https://github.com/justi/context-revive
 set -euo pipefail
 
-VERSION="0.1.2"
+VERSION="0.1.3"
 STATIC_FILE=".revive/static.md"
 COMMANDS_FILE=".revive/commands.md"
 BRIEF_CHAR_BUDGET=1800
@@ -20,7 +20,9 @@ usage() {
 Usage: revive <command> [options]
 
 Commands:
-  init              Generate .revive/static.md (PURPOSE, INVARIANTS, GOTCHAS)
+  init              Generate .revive/static.md (PURPOSE, INVARIANTS, GOTCHAS).
+                    Use `init --force` to regenerate PURPOSE from the chain
+                    while preserving user-edited INVARIANTS and GOTCHAS.
   show              Print the brief that would be injected (force-emit)
   refresh           Hook entry point — cadence-gated, silent on failure
   install-hook      Wire UserPromptSubmit into .claude/settings.json
@@ -461,21 +463,57 @@ compute_purpose() {
 }
 
 cmd_init() {
-  if [[ -e "$STATIC_FILE" ]]; then
-    echo "exists: $STATIC_FILE (not overwriting)" >&2
+  local force=0
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+      --force|-f) force=1 ;;
+      *) echo "unknown option: $arg" >&2; exit 1 ;;
+    esac
+  done
+
+  if [[ -e "$STATIC_FILE" ]] && (( force == 0 )); then
+    echo "exists: $STATIC_FILE (use --force to regenerate PURPOSE)" >&2
     exit 1
   fi
+
+  # Preserve user-edited INVARIANTS and GOTCHAS across a --force regenerate;
+  # only PURPOSE is replaced. This is the common flow after upgrading
+  # revive — the chain got smarter, user rules haven't changed.
+  local invariants="  - (top-5 architectural rules; edit this file)"
+  local gotchas="  - (landmines you keep stepping on; edit this file)"
+  if (( force )) && [[ -f "$STATIC_FILE" ]]; then
+    local preserved
+    preserved=$(awk '
+      /^INVARIANTS:/ { cap="inv"; next }
+      /^GOTCHAS:/    { cap="got"; next }
+      /^[A-Z][A-Z_]*:/ { cap="" }
+      cap == "inv" { inv = inv $0 "\n" }
+      cap == "got" { got = got $0 "\n" }
+      END { printf "INV_START\n%sINV_END\nGOT_START\n%sGOT_END\n", inv, got }
+    ' "$STATIC_FILE")
+    local saved_inv saved_got
+    saved_inv=$(awk '/^INV_START$/{p=1;next} /^INV_END$/{p=0} p' <<<"$preserved" | sed '/^$/d')
+    saved_got=$(awk '/^GOT_START$/{p=1;next} /^GOT_END$/{p=0} p' <<<"$preserved" | sed '/^$/d')
+    [[ -n "$saved_inv" ]] && invariants="$saved_inv"
+    [[ -n "$saved_got" ]] && gotchas="$saved_got"
+  fi
+
   mkdir -p "$(dirname "$STATIC_FILE")"
   local purpose
   purpose=$(compute_purpose)
-  cat > "$STATIC_FILE" <<EOF
-PURPOSE: ${purpose}
-INVARIANTS:
-  - (top-5 architectural rules; edit this file)
-GOTCHAS:
-  - (landmines you keep stepping on; edit this file)
-EOF
-  echo "created: $STATIC_FILE"
+  {
+    printf 'PURPOSE: %s\n' "$purpose"
+    echo "INVARIANTS:"
+    printf '%s\n' "$invariants"
+    echo "GOTCHAS:"
+    printf '%s\n' "$gotchas"
+  } > "$STATIC_FILE"
+  if (( force )); then
+    echo "regenerated: $STATIC_FILE (INVARIANTS/GOTCHAS preserved)"
+  else
+    echo "created: $STATIC_FILE"
+  fi
 }
 
 cmd_install_hook() {
