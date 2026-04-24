@@ -33,7 +33,8 @@ Requires:
 ```bash
 cd your-project
 revive init              # scaffold .revive/static.md (PURPOSE auto-detected)
-revive suggest | pbcopy  # prompt for your agent to fill DIFFERENTIATORS / INVARIANTS / GOTCHAS
+revive suggest | pbcopy  # generate DIFFERENTIATORS / INVARIANTS / GOTCHAS — paste into current session
+revive audit   | pbcopy  # second-pass gap audit — paste into FRESH session
 revive install-hook      # wire UserPromptSubmit into .claude/settings.json
 revive show              # preview the brief
 ```
@@ -44,18 +45,33 @@ brief prepended to context — deterministic, <100ms, <10k chars
 
 ### Filling PURPOSE / DIFFERENTIATORS / INVARIANTS / GOTCHAS with your agent
 
-`revive init` gives you a PURPOSE from manifest metadata and
-placeholder scaffolds for the other sections. `revive suggest`
-prints a project-tailored LLM prompt that lists your actual
-CLAUDE.md / ADRs / HOT_FILES and asks the agent to fill any still-
-placeholder sections end-to-end. Paste it into Claude Code / Cursor
-/ Aider — the agent previews the output, then edits
-`.revive/static.md` for you.
+Two-pass flow — designed deliberately:
+
+1. **`revive suggest`** — generation pass. Prints a project-tailored
+   LLM prompt that lists your actual CLAUDE.md / ADRs / HOT_FILES
+   and asks the agent to fill any still-placeholder sections
+   end-to-end. Paste it into Claude Code / Cursor / Aider — the
+   agent previews the output, then edits `.revive/static.md`
+   for you.
+
+2. **`revive audit`** — gap-audit pass, in a **fresh agent session**.
+   Prints a separate prompt that re-reads the file + artefacts and
+   scans against a 6-category checklist (toolchain specifics,
+   skill-file discipline, workflow dichotomies, privacy/OpSec,
+   cross-ADR process rules, convention collisions). Proposes
+   additional bullets for anything the generation pass missed.
+
+The two steps use separate LLM calls on purpose: a single session
+that both generates and audits its own output suffers from context
+saturation (tired attention by STEP 2) and self-critique sycophancy
+(agents tend to rubber-stamp their own recent writes). A fresh
+session — new Claude Code window, `/clear` in the current one, new
+Cursor chat tab — catches gaps the first pass can't.
 
 Research is blunt: *"Human curation yields ~4% performance gains;
 auto-generation reduces success rates by 0.5–2%"* — so the agent
 is explicitly told NOT to rewrite sections that already contain
-real content. Re-runs are idempotent.
+real content. Re-runs are idempotent; audit only ever APPENDS.
 
 ### Reset / regenerate from scratch
 
@@ -70,6 +86,9 @@ revive init              # fresh scaffold with current chain
 revive suggest | pbcopy  # agent prompt for DIFFERENTIATORS/INVARIANTS/GOTCHAS
 #   → paste into Claude Code / Cursor / Aider session
 #   → agent writes the file end-to-end
+revive audit   | pbcopy  # second-pass gap audit
+#   → paste into a FRESH session (/clear, new tab, etc.)
+#   → agent proposes additional bullets the first pass missed
 revive show              # verify
 ```
 
