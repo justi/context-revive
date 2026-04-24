@@ -1020,16 +1020,35 @@ EOF
   printf '%s\n' "$output" | grep -qF 'formal architecture-rules ADR' || return 1
 }
 
-# v0.1.16 — STEP 3 audit pass for STATIC gaps
-@test "suggest prompt defines a STEP 3 audit pass" {
+# v0.1.17 — audit is now a SEPARATE command/LLM call, not STEP 3 in suggest.
+# Keeps the suggest prompt focused on generation, gives the audit a fresh
+# context window, and avoids self-critique sycophancy.
+@test "suggest prompt no longer embeds a STEP 3 audit pass" {
   run "$REVIVE" suggest
   [ "$status" -eq 0 ]
-  printf '%s\n' "$output" | grep -qF 'STEP 3 — Audit pass' || return 1
-  printf '%s\n' "$output" | grep -qF 'STATIC only'         || return 1
+  # The old STEP 3 in-place audit is gone — audit is its own command
+  printf '%s\n' "$output" | grep -qF 'STEP 3 — Audit pass' && return 1
+  true
 }
 
-@test "suggest STEP 3 checklist mentions the common-missed classes" {
+@test "suggest prompt points users at the separate audit command" {
   run "$REVIVE" suggest
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -qF 'revive audit' || return 1
+  printf '%s\n' "$output" | grep -qF 'FRESH'        || return 1
+}
+
+@test "audit prints a standalone prompt with a clear scope banner" {
+  run "$REVIVE" audit
+  [ "$status" -eq 0 ] || return 1
+  printf '%s\n' "$output" | grep -qF 'Audit the STATIC sections'  || return 1
+  printf '%s\n' "$output" | grep -qF 'EDIT ONLY STATIC sections'  || return 1
+  printf '%s\n' "$output" | grep -qF 'Never touch DYNAMIC'        || return 1
+  printf '%s\n' "$output" | grep -qF 'Never REWRITE an existing'  || return 1
+}
+
+@test "audit checklist names all six commonly-missed categories" {
+  run "$REVIVE" audit
   [ "$status" -eq 0 ]
   printf '%s\n' "$output" | grep -qF 'Toolchain specifics'       || return 1
   printf '%s\n' "$output" | grep -qF 'knowledge-file discipline' || return 1
@@ -1039,30 +1058,42 @@ EOF
   printf '%s\n' "$output" | grep -qF 'Convention collisions'     || return 1
 }
 
-@test "suggest STEP 3 explicitly preserves DYNAMIC" {
-  # Audit may READ dynamic content but never edit it — dynamic regenerates
-  # every refresh, freezing it into STATIC defeats the purpose. Check
-  # sentinel substrings that are line-complete (prompt wraps at ~72 cols).
-  run "$REVIVE" suggest
+@test "audit output uses structured GAP / SECTION / PROPOSED BULLET format" {
+  run "$REVIVE" audit
   [ "$status" -eq 0 ]
-  printf '%s\n' "$output" | grep -qF 'DYNAMIC regenerates every refresh' || return 1
-  printf '%s\n' "$output" | grep -qF 'do NOT try to capture'             || return 1
+  printf '%s\n' "$output" | grep -qF 'GAP:'             || return 1
+  printf '%s\n' "$output" | grep -qF 'SECTION:'         || return 1
+  printf '%s\n' "$output" | grep -qF 'PROPOSED BULLET:' || return 1
 }
 
-@test "suggest STEP 3 forbids padding with marginal findings" {
-  run "$REVIVE" suggest
+@test "audit forbids padding and documents 'no gaps' as a valid outcome" {
+  # "Audit: no gaps found." wraps across lines in the prompt — assert each
+  # half separately (both are line-complete after wrap).
+  run "$REVIVE" audit
   [ "$status" -eq 0 ]
-  printf '%s\n' "$output" | grep -qF 'Audit: no gaps' || return 1
-  printf '%s\n' "$output" | grep -qF 'marginal'       || return 1
-  printf '%s\n' "$output" | grep -qF 'to look'        || return 1
+  printf '%s\n' "$output" | grep -qF 'Audit: no gaps'     || return 1
+  printf '%s\n' "$output" | grep -qF 'pad with marginal'  || return 1
+  printf '%s\n' "$output" | grep -qF 'valid outcome'      || return 1
 }
 
-@test "suggest STEP 3 asks user before extending the file" {
-  # Agent must not silently add bullets — user controls what lands
-  run "$REVIVE" suggest
+@test "audit asks for confirmation before appending to the file" {
+  run "$REVIVE" audit
   [ "$status" -eq 0 ]
-  printf '%s\n' "$output" | grep -qF 'Add these N bullets'   || return 1
-  printf '%s\n' "$output" | grep -qF 'Only extend the file' || return 1
+  printf '%s\n' "$output" | grep -qF 'Append these N bullets' || return 1
+  printf '%s\n' "$output" | grep -qF 'wait for my answer'     || return 1
+}
+
+@test "audit meta-hint on stderr references a FRESH session" {
+  local stderr
+  stderr=$("$REVIVE" audit 2>&1 >/dev/null)
+  [[ "$stderr" == *"FRESH"* ]] || return 1
+  [[ "$stderr" == *"pbcopy"* ]] || return 1
+}
+
+@test "audit appears in usage help" {
+  run "$REVIVE" help
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -qF 'audit' || return 1
 }
 
 @test "suggest prompt tells agent not to self-censor for aesthetic reasons" {
@@ -1138,12 +1169,16 @@ EOF
   printf '%s\n' "$output" | grep -qF 'STEP 2 entirely.' || return 1
 }
 
-@test "suggest prints pipe-to-clipboard hint on stderr only" {
+@test "suggest prints meta-comment block on stderr only" {
+  # The `# Paste this prompt ...` framing block goes to stderr so that
+  # `revive suggest | pbcopy` doesn't ship framing into the clipboard.
+  # (The prompt body itself may reference `pbcopy` / `revive audit` as
+  # legitimate instructions to the agent — those belong on stdout.)
   local stdout stderr
   stdout=$("$REVIVE" suggest 2>/dev/null)
   stderr=$("$REVIVE" suggest 2>&1 >/dev/null)
-  [[ "$stderr" == *"pbcopy"* ]]
-  [[ "$stdout" != *"pbcopy"* ]]
+  [[ "$stderr" == *"Paste this prompt into your current"* ]] || return 1
+  [[ "$stdout" != *"Paste this prompt into your current"* ]] || return 1
 }
 
 @test "suggest lists CLAUDE.md when present" {

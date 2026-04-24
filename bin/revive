@@ -3,7 +3,7 @@
 # https://github.com/justi/context-revive
 set -euo pipefail
 
-VERSION="0.1.16"
+VERSION="0.1.17"
 STATIC_FILE=".revive/static.md"
 COMMANDS_FILE=".revive/commands.md"
 BRIEF_CHAR_BUDGET=2200
@@ -28,6 +28,10 @@ Commands:
                     coding agent, generates PURPOSE + DIFFERENTIATORS +
                     INVARIANTS + GOTCHAS for this project. Tailored to the
                     actual files in the repo.
+  audit             Print an LLM-ready prompt for a second-pass gap audit
+                    of .revive/static.md. Run in a FRESH agent session
+                    after `suggest` — a clean context window catches
+                    non-inferable facts the generation pass missed.
   show              Print the brief that would be injected (force-emit)
   refresh           Hook entry point — cadence-gated, silent on failure
   install-hook      Wire UserPromptSubmit into .claude/settings.json
@@ -703,9 +707,11 @@ cmd_suggest() {
   cat >&2 <<'PROMPT_META'
 # Paste this prompt into your current Claude Code / Cursor / Aider session.
 # The agent will: (1) preview PURPOSE + DIFFERENTIATORS + INVARIANTS +
-# GOTCHAS, (2) edit .revive/static.md in place, (3) audit the result
-# against a checklist of commonly-missed non-inferable facts and
-# propose additional bullets if it finds any.
+# GOTCHAS, (2) edit .revive/static.md in place.
+#
+# For a second-pass gap audit, run `revive audit | pbcopy` afterwards
+# and paste into a FRESH session — clean context window catches things
+# the generation pass missed.
 #
 # Pipe to clipboard: `revive suggest | pbcopy` (macOS).
 # Requires: .revive/static.md must already exist (run `revive init` first).
@@ -919,55 +925,126 @@ Do two things, in order — do NOT stop after step 1:
   were rewritten and which were preserved, plus the final line
   count of .revive/static.md.
 
-  STEP 3 — Audit pass (STATIC only). Re-read the updated
-  .revive/static.md and scan the project one more time for
-  commonly-missed classes of non-inferable facts. You MAY consult
-  DYNAMIC sections (HOT_FILES, STATE, commit history) as signal —
-  but DYNAMIC regenerates every refresh, so do NOT try to capture
-  its content into STATIC. Only STATIC sections (PURPOSE,
-  DIFFERENTIATORS, INVARIANTS, GOTCHAS) are editable in this step.
-
-  Checklist — for each category, does the current STATIC already
-  cover it? If not, is there real signal in the artefacts that
-  should land in one of the four STATIC sections?
-
-    1. Toolchain specifics — exact invocations that differ from
-       convention (e.g. `.venv/bin/python -m pytest` instead of
-       `pytest`, `bundle exec rspec`, a custom launcher in `bin/`,
-       non-default test/lint flags listed in CLAUDE.md).
-    2. Agent skill / knowledge-file discipline — if the project
-       has `.claude/skills/*.md`, `.cursor/rules/*.md`,
-       `docs/agents/*.md`, or any other "read this before writing
-       X" convention, that's a mandatory INVARIANT.
-    3. Workflow dichotomies — pairs of commands where picking the
-       wrong one causes silent drift (e.g. "X runs incremental,
-       Y runs full rebuild"; "dev vs prod migrate"; "scan vs
-       start"). Agent misuse of one for the other = debug-hours.
-    4. Privacy / OpSec — data that must NOT leak into public
-       content (real paths, hours, customer/project names,
-       credentials, gitignored artefacts).
-    5. Cross-ADR process rules — panel-review requirements,
-       pre-commit rituals, decision-journal hooks, ADRs that
-       supersede earlier ones (e.g. "ADR X is Proposed, superseded
-       by ADR Y"), cross-module contracts.
-    6. Convention collisions — shared labels across files/sections
-       that collide (e.g. "M1 in commits = PLAN.md §8, not §5").
-
-  For each gap found: print a one-line rationale with a specific
-  artefact reference, AND a proposed bullet in the format of the
-  target section (PURPOSE / DIFFERENTIATORS / INVARIANTS /
-  GOTCHAS).
-
-  Then ask: "Add these N bullets to .revive/static.md? (y/n)".
-  Only extend the file if I say yes.
-
-  If you find zero substantive gaps, say exactly "Audit: no gaps
-  found." and stop — do NOT pad with marginal findings to look
-  busy.
+  After suggest finishes, run `revive audit | pbcopy` and paste
+  that into a FRESH agent session — second-pass audit in a clean
+  context window catches commonly-missed facts that this session
+  is now too saturated to see.
 
 If .revive/static.md does not exist, stop and tell me to run
 `revive init` first — do NOT create it from scratch (PURPOSE
 extraction is revive's job, not yours).
+PROMPT_BODY
+}
+
+# Audit is a deliberately-separate LLM call from `suggest`. A fresh
+# session avoids two failure modes of combined generation + audit:
+#   1. Context-window saturation — by the time the agent finishes
+#      generating + editing, attention is already spent. A second
+#      pass in a clean window has more headroom for checklist work.
+#   2. Self-critique sycophancy — LLMs asked to audit their own
+#      recent output in the same turn tend to rubber-stamp it.
+#      Fresh call, fresh eyes.
+cmd_audit() {
+  local sources=()
+  [[ -f CLAUDE.md ]]    && sources+=("CLAUDE.md")
+  [[ -f AGENTS.md ]]    && sources+=("AGENTS.md")
+  [[ -f README.md ]]    && sources+=("README.md")
+  [[ -d adr ]]          && sources+=("adr/*.md")
+  [[ -d docs/adr ]]     && sources+=("docs/adr/*.md")
+  [[ -d docs ]]         && sources+=("docs/*.md")
+  [[ -f CHANGELOG.md ]] && sources+=("CHANGELOG.md")
+  [[ -d .claude/skills ]] && sources+=(".claude/skills/*.md (if present)")
+  [[ -d .cursor/rules ]]  && sources+=(".cursor/rules/*.md (if present)")
+
+  cat >&2 <<'PROMPT_META'
+# Paste this prompt into a FRESH Claude Code / Cursor / Aider session
+# (not the one that just ran `revive suggest`). A clean context window
+# is what gives this second pass its value — see commit log for why.
+#
+# Pipe to clipboard: `revive audit | pbcopy` (macOS).
+# Requires: .revive/static.md already populated (via `revive suggest`
+# or by hand). Without real content to audit against, this is a no-op.
+PROMPT_META
+
+  cat <<'PROMPT_HEADER'
+Audit the STATIC sections of .revive/static.md against the artefacts
+in this project. Find and propose bullets for NON-INFERABLE facts
+that the current file misses. Do NOT rewrite what's already there —
+only add what's missing.
+
+Files to read (read `.revive/static.md` first — it's the thing being
+audited):
+  - .revive/static.md
+PROMPT_HEADER
+
+  local s
+  if (( ${#sources[@]} > 0 )); then
+    for s in "${sources[@]}"; do
+      printf '  - %s\n' "$s"
+    done
+  fi
+
+  cat <<'PROMPT_BODY'
+  - git log --oneline -30 (signal for workflow rhythms / recent shifts)
+
+Scope rules:
+
+  - EDIT ONLY STATIC sections (PURPOSE, DIFFERENTIATORS, INVARIANTS,
+    GOTCHAS). Never touch DYNAMIC (STATE, TODO, HOT_FILES, COMMANDS).
+    DYNAMIC regenerates every refresh; any content captured there
+    would immediately go stale.
+  - MAY read DYNAMIC in the live brief as signal (e.g., HOT_FILES
+    tells you where to look first; STATE tells you what's in flight).
+  - Never REWRITE an existing PURPOSE, DIFFERENTIATORS, INVARIANTS,
+    or GOTCHAS bullet. Only ADD net-new bullets.
+
+Checklist — for each category, scan the artefacts and flag anything
+that is both (a) non-inferable by reading the code and (b) not
+already covered by an existing STATIC bullet:
+
+  1. Toolchain specifics — exact invocations that differ from
+     convention. Common misses: `.venv/bin/python -m pytest` rather
+     than `pytest`; `bundle exec rspec` rather than `rspec`; custom
+     bin/ launchers; non-default test/lint flags listed in
+     CLAUDE.md §Stack or similar.
+  2. Agent skill / knowledge-file discipline — if the project has
+     `.claude/skills/*.md`, `.cursor/rules/*.md`, `docs/agents/*.md`,
+     or any other "read this before writing X" convention, the
+     "ALWAYS read before writing" rule is a mandatory INVARIANT.
+  3. Workflow dichotomies — pairs of commands where picking the
+     wrong one causes silent drift. Classic: `start` (incremental)
+     vs `scan` (full rebuild); `dev migrate` vs `prod migrate`;
+     `test` vs `test:integration`. Agent mis-picking = debug-hours.
+  4. Privacy / OpSec — data that must NOT leak to public content
+     (real paths, hours, customer/project names, credentials,
+     gitignored artefacts cited in PRs).
+  5. Cross-ADR process rules — panel-review requirements,
+     pre-commit rituals, decision-journal hooks, supersession
+     chains ("ADR X superseded by ADR Y"), cross-module contracts.
+  6. Convention collisions — shared labels across files/sections
+     that collide (e.g. "M1 in commits means PLAN.md §8, not §5"),
+     or version-number conventions that don't match semver.
+
+For each gap found, print ONE block in this exact shape:
+
+  GAP: <one-line rationale, cite the artefact — "CLAUDE.md §Stack",
+       "ADR 0001 rule 3", "commit abc123", etc.>
+  SECTION: PURPOSE | DIFFERENTIATORS | INVARIANTS | GOTCHAS
+  PROPOSED BULLET: - <the exact bullet to add, ≤ 120 chars>
+
+If you find zero substantive gaps, say exactly "Audit: no gaps
+found." and stop — do NOT pad with marginal findings to look busy.
+A clean audit is a valid outcome.
+
+Final step: after listing all gaps, ask me "Append these N bullets
+to .revive/static.md? (y/n)" and wait for my answer. On yes, use
+your editor tool to append each bullet to the end of its target
+section, preserving existing content and section order. On no, do
+nothing — I may have reasons to reject specific findings.
+
+If .revive/static.md does not exist, stop and tell me to run
+`revive init` + `revive suggest` first — audit has nothing to
+audit against on a fresh project.
 PROMPT_BODY
 }
 
@@ -1032,6 +1109,7 @@ main() {
     show)          cmd_show "$@" ;;
     refresh)       cmd_refresh "$@" ;;
     suggest)       cmd_suggest "$@" ;;
+    audit)         cmd_audit "$@" ;;
     install-hook)  cmd_install_hook "$@" ;;
     version|--version|-v) cmd_version ;;
     help|--help|-h)       usage ;;
