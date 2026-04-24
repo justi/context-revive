@@ -616,8 +616,21 @@ EOF
   [[ "$output" == *"GOTCHAS"* ]]
   [[ "$output" == *"non-inferable"* ]]
   # meta-comments must go to stderr, not stdout — so `| pbcopy` stays clean
-  [[ "$output" != *"Pipe this to your clipboard"* ]]
+  [[ "$output" != *"Paste this prompt"* ]]
   [[ "$output" != *"BEGIN PROMPT"* ]]
+}
+
+@test "suggest prompt instructs agent to edit .revive/static.md end-to-end" {
+  run "$REVIVE" suggest
+  [ "$status" -eq 0 ]
+  # step 1: preview
+  [[ "$output" == *"STEP 1"* ]]
+  [[ "$output" == *"preview"* ]]
+  # step 2: edit the file in place
+  [[ "$output" == *"STEP 2"* ]]
+  [[ "$output" == *".revive/static.md"* ]]
+  # guard against creating the file if it doesn't exist
+  [[ "$output" == *"revive init"* ]]
 }
 
 @test "suggest prints pipe-to-clipboard hint on stderr only" {
