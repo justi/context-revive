@@ -609,6 +609,48 @@ EOF
   [[ "$output" == *"regenerated"* ]]
 }
 
+@test "suggest prints begin/end markers and core sections" {
+  run "$REVIVE" suggest
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"--- BEGIN PROMPT ---"* ]]
+  [[ "$output" == *"--- END PROMPT ---"* ]]
+  [[ "$output" == *"INVARIANTS"* ]]
+  [[ "$output" == *"GOTCHAS"* ]]
+  [[ "$output" == *"non-inferable"* ]]
+}
+
+@test "suggest lists CLAUDE.md when present" {
+  echo "# Project" > CLAUDE.md
+  run "$REVIVE" suggest
+  [[ "$output" == *"- CLAUDE.md"* ]]
+}
+
+@test "suggest lists adr/ when present" {
+  mkdir -p adr
+  echo "# ADR 1" > adr/0001-foo.md
+  run "$REVIVE" suggest
+  [[ "$output" == *"adr/*.md"* ]]
+}
+
+@test "suggest lists HOT_FILES from recent commits" {
+  echo a > foo.rb
+  git add foo.rb
+  git commit -qm "add foo"
+  echo b >> foo.rb
+  git add foo.rb
+  git commit -qm "update foo"
+  run "$REVIVE" suggest
+  [[ "$output" == *"HOT_FILES"* ]]
+  [[ "$output" == *"foo.rb"* ]]
+}
+
+@test "suggest output is self-contained (no revive-internal jargon in prompt body)" {
+  run "$REVIVE" suggest
+  # the prompt sent to the LLM must reference .revive/static.md explicitly
+  # so it works when pasted fresh into any agent
+  [[ "$output" == *".revive/static.md"* ]]
+}
+
 @test "init rejects unknown options" {
   run "$REVIVE" init --bogus
   [ "$status" -eq 1 ]
