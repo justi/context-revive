@@ -3,10 +3,10 @@
 # https://github.com/justi/context-revive
 set -euo pipefail
 
-VERSION="0.1.6"
+VERSION="0.1.7"
 STATIC_FILE=".revive/static.md"
 COMMANDS_FILE=".revive/commands.md"
-BRIEF_CHAR_BUDGET=1800
+BRIEF_CHAR_BUDGET=2200
 
 LOG_DIR="${HOME}/.context-revive"
 LOG_FILE="${LOG_DIR}/hook.log"
@@ -59,6 +59,10 @@ dyn_state() {
 }
 
 dyn_todo() {
+  # Omit the section entirely when no source file is found — consistent
+  # with COMMANDS section behavior and the "show nothing > show placeholder
+  # noise" principle. Injecting "(no plan.md/TODO.md found)" into every
+  # prompt is ~32 chars of zero-signal content.
   local f
   for f in plan.md PLAN.md TODO.md todo.md TODO ROADMAP.md; do
     if [[ -f "$f" ]]; then
@@ -67,7 +71,6 @@ dyn_todo() {
       return
     fi
   done
-  echo "TODO: (no plan.md/TODO.md found)"
 }
 
 # Extract up to top-5 well-known command labels (test/lint/build/dev/run/…).
