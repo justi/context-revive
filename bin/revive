@@ -3,7 +3,7 @@
 # https://github.com/justi/context-revive
 set -euo pipefail
 
-VERSION="0.1.13"
+VERSION="0.1.14"
 STATIC_FILE=".revive/static.md"
 COMMANDS_FILE=".revive/commands.md"
 BRIEF_CHAR_BUDGET=2200
@@ -20,12 +20,14 @@ usage() {
 Usage: revive <command> [options]
 
 Commands:
-  init              Generate .revive/static.md (PURPOSE, INVARIANTS, GOTCHAS).
-                    Use `init --force` to regenerate PURPOSE from the chain
-                    while preserving user-edited INVARIANTS and GOTCHAS.
+  init              Generate .revive/static.md (PURPOSE, DIFFERENTIATORS,
+                    INVARIANTS, GOTCHAS). Use `init --force` to regenerate
+                    PURPOSE from the chain while preserving user-edited
+                    DIFFERENTIATORS, INVARIANTS, and GOTCHAS.
   suggest           Print an LLM-ready prompt that, when pasted into any
-                    coding agent, generates PURPOSE + INVARIANTS + GOTCHAS
-                    for this project. Tailored to the actual files in the repo.
+                    coding agent, generates PURPOSE + DIFFERENTIATORS +
+                    INVARIANTS + GOTCHAS for this project. Tailored to the
+                    actual files in the repo.
   show              Print the brief that would be injected (force-emit)
   refresh           Hook entry point — cadence-gated, silent on failure
   install-hook      Wire UserPromptSubmit into .claude/settings.json
@@ -341,7 +343,7 @@ EOF
       }
       NR_buf = 0
     }
-    /^(PURPOSE|INVARIANTS|GOTCHAS):/ { flush(); buf[++NR_buf] = $0; next }
+    /^(PURPOSE|DIFFERENTIATORS|INVARIANTS|GOTCHAS):/ { flush(); buf[++NR_buf] = $0; next }
     { buf[++NR_buf] = $0 }
     END { flush() }
   ' "$STATIC_FILE"
@@ -620,26 +622,35 @@ cmd_init() {
     exit 1
   fi
 
-  # Preserve user-edited INVARIANTS and GOTCHAS across a --force regenerate;
-  # only PURPOSE is replaced. This is the common flow after upgrading
-  # revive — the chain got smarter, user rules haven't changed.
+  # Preserve user-edited DIFFERENTIATORS / INVARIANTS / GOTCHAS across a
+  # --force regenerate; only PURPOSE is replaced. This is the common flow
+  # after upgrading revive — the chain got smarter, user rules haven't
+  # changed.
+  local differentiators="  - (what sets this project apart; edit this file)"
   local invariants="  - (top-5 architectural rules; edit this file)"
   local gotchas="  - (landmines you keep stepping on; edit this file)"
   if (( force )) && [[ -f "$STATIC_FILE" ]]; then
     local preserved
     preserved=$(awk '
-      /^INVARIANTS:/ { cap="inv"; next }
-      /^GOTCHAS:/    { cap="got"; next }
-      /^[A-Z][A-Z_]*:/ { cap="" }
-      cap == "inv" { inv = inv $0 "\n" }
-      cap == "got" { got = got $0 "\n" }
-      END { printf "INV_START\n%sINV_END\nGOT_START\n%sGOT_END\n", inv, got }
+      /^DIFFERENTIATORS:/ { cap="diff"; next }
+      /^INVARIANTS:/      { cap="inv"; next }
+      /^GOTCHAS:/         { cap="got"; next }
+      /^[A-Z][A-Z_]*:/    { cap="" }
+      cap == "diff" { diff = diff $0 "\n" }
+      cap == "inv"  { inv = inv $0 "\n" }
+      cap == "got"  { got = got $0 "\n" }
+      END {
+        printf "DIFF_START\n%sDIFF_END\nINV_START\n%sINV_END\nGOT_START\n%sGOT_END\n",
+               diff, inv, got
+      }
     ' "$STATIC_FILE")
-    local saved_inv saved_got
+    local saved_diff saved_inv saved_got
+    saved_diff=$(awk '/^DIFF_START$/{p=1;next} /^DIFF_END$/{p=0} p' <<<"$preserved" | sed '/^$/d')
     saved_inv=$(awk '/^INV_START$/{p=1;next} /^INV_END$/{p=0} p' <<<"$preserved" | sed '/^$/d')
     saved_got=$(awk '/^GOT_START$/{p=1;next} /^GOT_END$/{p=0} p' <<<"$preserved" | sed '/^$/d')
-    [[ -n "$saved_inv" ]] && invariants="$saved_inv"
-    [[ -n "$saved_got" ]] && gotchas="$saved_got"
+    [[ -n "$saved_diff" ]] && differentiators="$saved_diff"
+    [[ -n "$saved_inv" ]]  && invariants="$saved_inv"
+    [[ -n "$saved_got" ]]  && gotchas="$saved_got"
   fi
 
   mkdir -p "$(dirname "$STATIC_FILE")"
@@ -647,13 +658,15 @@ cmd_init() {
   purpose=$(compute_purpose)
   {
     printf 'PURPOSE: %s\n' "$purpose"
+    echo "DIFFERENTIATORS:"
+    printf '%s\n' "$differentiators"
     echo "INVARIANTS:"
     printf '%s\n' "$invariants"
     echo "GOTCHAS:"
     printf '%s\n' "$gotchas"
   } > "$STATIC_FILE"
   if (( force )); then
-    echo "regenerated: $STATIC_FILE (INVARIANTS/GOTCHAS preserved)"
+    echo "regenerated: $STATIC_FILE (DIFFERENTIATORS/INVARIANTS/GOTCHAS preserved)"
   else
     echo "created: $STATIC_FILE"
   fi
@@ -699,17 +712,24 @@ PROMPT_META
   cat <<'PROMPT_HEADER'
 Read the following artefacts in the current project, then fill any
 placeholder sections of .revive/static.md. Treat existing human-
-curated content as sacred: PURPOSE, INVARIANTS, and GOTCHAS that
-already contain real content must be preserved verbatim — do not
-rewrite substantive sections just because you can.
+curated content as sacred: PURPOSE, DIFFERENTIATORS, INVARIANTS,
+and GOTCHAS that already contain real content must be preserved
+verbatim — do not rewrite substantive sections just because you can.
 
 Regenerate ONLY sections that are still in their `revive init`
 placeholder state. Recognise a placeholder by these markers:
 
   - PURPOSE: literal `(describe this project in 1-3 sentences)`,
-    OR a single short fragment clearly extracted from a manifest/
-    README without context (a one-sentence pitch under ~80 chars
-    that doesn't frame the project).
+    OR a marketing-style 1-liner that states WHAT the project does
+    but doesn't spell out WHY it exists / what success looks like.
+    A gh repo description or README tagline typically falls in this
+    category — it's readable, but doesn't give an agent enough to
+    understand the business value or operating priorities.
+    Rule of thumb: if the current PURPOSE could fit on a single
+    marketing banner and a reader couldn't answer "what does success
+    for this project look like?" from it alone, treat as placeholder.
+  - DIFFERENTIATORS: bullets containing `(what sets this project
+    apart; edit this file)` or `(none defined)`.
   - INVARIANTS: bullets containing `(top-5 architectural rules;
     edit this file)` or `(none defined)`.
   - GOTCHAS: bullets containing `(landmines you keep stepping on;
@@ -752,30 +772,63 @@ Strict rules (violations are failures, not stylistic preferences):
      incident, OMIT it. Placeholder > false confidence.
 
 Deliverable 1 — PURPOSE (single line, ≤ 400 chars):
-  A tight 2-3 sentence summary that answers:
-    - what the project IS (product one-liner)
-    - its essential philosophy or hard constraint (what makes it different)
-  Include just enough context that someone reading only the brief could
-  pick up work without reading README/CLAUDE.md first.
+  A tight 2-3 sentence summary that answers ALL THREE of:
+    1. WHAT the project is (product one-liner)
+    2. WHY it exists — business goal or success criterion the project
+       is optimizing for (e.g. "cut X hours from weekly ops",
+       "unlock audience Y", "prevent incident class Z", "reclaim
+       DORMANT side projects")
+    3. Its essential philosophy or hard constraint (what makes it
+       different, the one thing every design decision must respect)
+
+  All three must be present. A gh-style 1-liner that covers only (1)
+  is NOT enough — it's a marketing tagline, not operating context.
 
   Bad examples:
-    - "A Flutter app."                    (useless, inferable)
-    - single terse fragment under 60 chars (too terse)
+    - "A Flutter app."                    (only 1, useless)
+    - "Never forget a side project."      (only 1, marketing tagline)
     - 800-char pasted README intro        (too long, buries signal)
 
   Good examples (generic):
     - "A CLI that turns Markdown invoices into tax-compliant PDFs.
-       Zero-config for sole traders in EU/UK; one-flag override for
-       custom templates."
-    - "Background-job scheduler for Go services. Unlike cron,
-       schedules are defined in code and survive deploys; job state
-       lives in the same Postgres the app already uses."
+       Saves sole traders ~3h/month of invoicing; success = zero
+       manual edits to the generated PDF. Zero-config by default;
+       customization only via explicit template flag."
+    - "Background-job scheduler for Go services. Goal: replace ops-
+       managed cron with code-defined schedules that survive
+       deploys; success = zero surprise job failures after a deploy.
+       Constraint: job state lives in the app's own Postgres — no
+       new infrastructure."
 
-  If the CURRENT PURPOSE line in .revive/static.md is already a good
-  2-3 sentence summary (clearly readable, frames the project well),
-  keep it verbatim — don't rewrite for its own sake.
+Deliverable 2 — DIFFERENTIATORS (up to 5, or empty):
+  What makes this project different from the obvious alternatives.
+  Competitive positioning, deliberate design choices that contradict
+  what another project in the space would do. This class of signal
+  prevents an agent from suggesting "why not just use X?" for an X
+  you've already evaluated and rejected.
 
-Deliverable 2 — INVARIANTS (up to 5):
+  Each bullet: "<alternative> → <what we do instead>" or "unlike
+  <alternative>, we <choice> because <reason>".
+
+  Bad examples:
+    - "We're open source."           (not differentiation)
+    - "Better than the rest."        (empty marketing)
+    - Anything an agent can discover by reading competitor READMEs.
+
+  Good examples:
+    - "Unlike cron — schedules defined in code, survive deploys; no
+       ops-managed crontab to drift from the repo."
+    - "repomix / code2prompt: one-shot dump → we inject small briefs
+       on cadence, no token flood."
+    - "Cursor Rules: static prepend → we regenerate DYNAMIC sections
+       per refresh from git + fs; recent work stays visible."
+
+  If you genuinely don't see meaningful differentiation signals in
+  the artefacts (ADRs comparing approaches, README "vs" sections,
+  CLAUDE.md rejected-alternatives notes), leave this section with
+  its placeholder — better empty than filler.
+
+Deliverable 3 — INVARIANTS (up to 5):
   Architectural or operational rules whose breakage causes non-obvious
   damage. Examples of the *class* of content to produce:
     - decisions captured in ADRs that contradict "obvious" approaches
@@ -794,7 +847,7 @@ Deliverable 2 — INVARIANTS (up to 5):
     - "Never run data migrations on Monday; the cron vacuum window
        overlaps and rollbacks stall."
 
-Deliverable 3 — GOTCHAS (3 to 5):
+Deliverable 4 — GOTCHAS (3 to 5):
   Landmines whose fix is not obvious from code alone. Dependency quirks,
   rate limits, migrations needing manual steps, config that looks like a
   bug but is deliberate, platform-specific behaviour.
@@ -813,10 +866,13 @@ Deliverable 3 — GOTCHAS (3 to 5):
 Quality bar: 3 strong rules beat 5 weak ones. Same for gotchas.
 
 Required output format (exact indentation, no code fences, no
-commentary). PURPOSE is a single line; INVARIANTS/GOTCHAS are bullet
-lists with two-space indent:
+commentary). PURPOSE is a single line; DIFFERENTIATORS, INVARIANTS,
+and GOTCHAS are bullet lists with two-space indent:
 
 PURPOSE: <single 2-3 sentence summary, ≤ 400 chars>
+DIFFERENTIATORS:
+  - <alternative → our choice / rationale>
+  - <...>
 INVARIANTS:
   - <rule 1>
   - <rule 2>
@@ -839,10 +895,10 @@ Do two things, in order — do NOT stop after step 1:
 
   STEP 2 — Open .revive/static.md and edit it in place: replace
   ONLY the sections you identified as placeholders. Preserve file
-  ordering (PURPOSE → INVARIANTS → GOTCHAS). Do NOT touch sections
-  you decided to preserve. Use your editor tool (Edit / Write /
-  str_replace — whatever your agent framework exposes); do NOT
-  ask me to paste manually.
+  ordering (PURPOSE → DIFFERENTIATORS → INVARIANTS → GOTCHAS).
+  Do NOT touch sections you decided to preserve. Use your editor
+  tool (Edit / Write / str_replace — whatever your agent framework
+  exposes); do NOT ask me to paste manually.
 
   After step 2, confirm with a one-line summary of which sections
   were rewritten and which were preserved, plus the final line
