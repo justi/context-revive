@@ -3,7 +3,7 @@
 # https://github.com/justi/context-revive
 set -euo pipefail
 
-VERSION="0.1.12"
+VERSION="0.1.13"
 STATIC_FILE=".revive/static.md"
 COMMANDS_FILE=".revive/commands.md"
 BRIEF_CHAR_BUDGET=2200
@@ -689,8 +689,8 @@ cmd_suggest() {
   # prompt in the clipboard, not our framing.
   cat >&2 <<'PROMPT_META'
 # Paste this prompt into your current Claude Code / Cursor / Aider session.
-# The agent will read your project files, generate INVARIANTS + GOTCHAS,
-# preview them, then edit .revive/static.md for you — end-to-end.
+# The agent will read your project files, generate PURPOSE + INVARIANTS +
+# GOTCHAS, preview them, then edit .revive/static.md for you — end-to-end.
 #
 # Pipe to clipboard: `revive suggest | pbcopy` (macOS).
 # Requires: .revive/static.md must already exist (run `revive init` first).
@@ -727,11 +727,35 @@ Strict rules (violations are failures, not stylistic preferences):
      listings, dependency graphs, "we use Framework X" facts, or
      anything auto-inferable. (2026 research shows auto-generated
      structure degrades agent success rate by 0.5–2%.)
-  4. Do NOT repeat PURPOSE. Don't paraphrase the README.
+  4. Don't paraphrase the README verbatim for non-PURPOSE sections.
   5. If you can't back a claim with a specific file / ADR / commit /
      incident, OMIT it. Placeholder > false confidence.
 
-Deliverable 1 — INVARIANTS (up to 5):
+Deliverable 1 — PURPOSE (single line, ≤ 400 chars):
+  A tight 2-3 sentence summary that answers:
+    - what the project IS (product one-liner)
+    - its essential philosophy or hard constraint (what makes it different)
+  Include just enough context that someone reading only the brief could
+  pick up work without reading README/CLAUDE.md first.
+
+  Bad examples:
+    - "A Flutter app."                    (useless, inferable)
+    - single terse fragment under 60 chars (too terse)
+    - 800-char pasted README intro        (too long, buries signal)
+
+  Good examples (generic):
+    - "A CLI that turns Markdown invoices into tax-compliant PDFs.
+       Zero-config for sole traders in EU/UK; one-flag override for
+       custom templates."
+    - "Background-job scheduler for Go services. Unlike cron,
+       schedules are defined in code and survive deploys; job state
+       lives in the same Postgres the app already uses."
+
+  If the CURRENT PURPOSE line in .revive/static.md is already a good
+  2-3 sentence summary (clearly readable, frames the project well),
+  keep it verbatim — don't rewrite for its own sake.
+
+Deliverable 2 — INVARIANTS (up to 5):
   Architectural or operational rules whose breakage causes non-obvious
   damage. Examples of the *class* of content to produce:
     - decisions captured in ADRs that contradict "obvious" approaches
@@ -750,7 +774,7 @@ Deliverable 1 — INVARIANTS (up to 5):
     - "Never run data migrations on Monday; the cron vacuum window
        overlaps and rollbacks stall."
 
-Deliverable 2 — GOTCHAS (3 to 5):
+Deliverable 3 — GOTCHAS (3 to 5):
   Landmines whose fix is not obvious from code alone. Dependency quirks,
   rate limits, migrations needing manual steps, config that looks like a
   bug but is deliberate, platform-specific behaviour.
@@ -768,9 +792,11 @@ Deliverable 2 — GOTCHAS (3 to 5):
 
 Quality bar: 3 strong rules beat 5 weak ones. Same for gotchas.
 
-Required format for the INVARIANTS / GOTCHAS blocks (exact indentation,
-no code fences, no commentary):
+Required output format (exact indentation, no code fences, no
+commentary). PURPOSE is a single line; INVARIANTS/GOTCHAS are bullet
+lists with two-space indent:
 
+PURPOSE: <single 2-3 sentence summary, ≤ 400 chars>
 INVARIANTS:
   - <rule 1>
   - <rule 2>
@@ -786,11 +812,16 @@ Do two things, in order — do NOT stop after step 1:
   preview so I can sanity-check it before it hits my repo.
 
   STEP 2 — Open .revive/static.md and edit it in place: replace the
-  existing `INVARIANTS:` and `GOTCHAS:` sections with the ones you
-  just generated. Leave the `PURPOSE:` line untouched. Preserve file
-  ordering (PURPOSE → INVARIANTS → GOTCHAS). Use your editor tool
-  (Edit / Write / str_replace — whatever your agent framework
-  exposes); do NOT ask me to paste manually.
+  existing `PURPOSE:` line AND the `INVARIANTS:` and `GOTCHAS:`
+  sections with the ones you just generated. Preserve file ordering
+  (PURPOSE → INVARIANTS → GOTCHAS). Use your editor tool (Edit /
+  Write / str_replace — whatever your agent framework exposes);
+  do NOT ask me to paste manually.
+
+  Exception for PURPOSE: if the current PURPOSE is already a clear
+  2-3 sentence summary (not just a terse fragment, not an 800-char
+  dump), you MAY keep it verbatim. In that case, still rewrite
+  INVARIANTS and GOTCHAS normally.
 
   After step 2, confirm with a one-line summary of what you wrote and
   the final line count of .revive/static.md.

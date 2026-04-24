@@ -906,13 +906,28 @@ EOF
   run "$REVIVE" suggest
   [ "$status" -eq 0 ]
   # step 1: preview
-  [[ "$output" == *"STEP 1"* ]]
-  [[ "$output" == *"preview"* ]]
+  [[ "$output" == *"STEP 1"* ]] || return 1
+  [[ "$output" == *"preview"* ]] || return 1
   # step 2: edit the file in place
-  [[ "$output" == *"STEP 2"* ]]
-  [[ "$output" == *".revive/static.md"* ]]
+  [[ "$output" == *"STEP 2"* ]] || return 1
+  [[ "$output" == *".revive/static.md"* ]] || return 1
   # guard against creating the file if it doesn't exist
-  [[ "$output" == *"revive init"* ]]
+  [[ "$output" == *"revive init"* ]] || return 1
+}
+
+@test "suggest prompt requests PURPOSE as Deliverable 1 (v0.1.13)" {
+  run "$REVIVE" suggest
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Deliverable 1 — PURPOSE"* ]]   || return 1
+  [[ "$output" == *"Deliverable 2 — INVARIANTS"* ]] || return 1
+  [[ "$output" == *"Deliverable 3 — GOTCHAS"* ]]   || return 1
+}
+
+@test "suggest prompt allows preserving a good PURPOSE verbatim" {
+  run "$REVIVE" suggest
+  [ "$status" -eq 0 ]
+  # Agent should be told it MAY keep the current PURPOSE if it's already good
+  [[ "$output" == *"keep it verbatim"* ]] || return 1
 }
 
 @test "suggest prints pipe-to-clipboard hint on stderr only" {
