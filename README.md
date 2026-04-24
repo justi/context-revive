@@ -33,36 +33,70 @@ Requires:
 ```bash
 cd your-project
 revive init              # scaffold .revive/static.md (PURPOSE auto-detected)
-revive suggest | pbcopy  # optional — prompt for your agent to fill INVARIANTS/GOTCHAS
+revive suggest | pbcopy  # prompt for your agent to fill DIFFERENTIATORS / INVARIANTS / GOTCHAS
 revive install-hook      # wire UserPromptSubmit into .claude/settings.json
 revive show              # preview the brief
 ```
 
 Every 5th prompt (or after 10 min / first call) Claude Code gets the
-brief prepended to context — deterministic, <1800 chars, <100ms.
+brief prepended to context — deterministic, <100ms, <10k chars
+(Claude Code hook limit).
 
-### Filling INVARIANTS and GOTCHAS with your agent
+### Filling PURPOSE / DIFFERENTIATORS / INVARIANTS / GOTCHAS with your agent
 
-`revive init` gives you PURPOSE; INVARIANTS and GOTCHAS are the
-human-curated sections (research shows auto-generation here hurts).
-`revive suggest` prints a project-tailored LLM prompt you can paste
-into Claude Code, Cursor, Aider, or any chat agent with file-read
-access — it lists your actual CLAUDE.md / ADRs / HOT_FILES and asks
-for 3-5 non-inferable rules. Paste the output into
-`.revive/static.md` and you're done.
+`revive init` gives you a PURPOSE from manifest metadata and
+placeholder scaffolds for the other sections. `revive suggest`
+prints a project-tailored LLM prompt that lists your actual
+CLAUDE.md / ADRs / HOT_FILES and asks the agent to fill any still-
+placeholder sections end-to-end. Paste it into Claude Code / Cursor
+/ Aider — the agent previews the output, then edits
+`.revive/static.md` for you.
+
+Research is blunt: *"Human curation yields ~4% performance gains;
+auto-generation reduces success rates by 0.5–2%"* — so the agent
+is explicitly told NOT to rewrite sections that already contain
+real content. Re-runs are idempotent.
+
+### Reset / regenerate from scratch
+
+If `.revive/static.md` drifted (old PURPOSE extracted before v0.1.2
+chain, stale rules, accidentally-preserved marketing tagline), start
+over cleanly:
+
+```bash
+cd your-project
+rm -rf .revive           # drop old static.md + any other revive state
+revive init              # fresh scaffold with current chain
+revive suggest | pbcopy  # agent prompt for DIFFERENTIATORS/INVARIANTS/GOTCHAS
+#   → paste into Claude Code / Cursor / Aider session
+#   → agent writes the file end-to-end
+revive show              # verify
+```
+
+Lighter alternative: `revive init --force` regenerates only PURPOSE
+(from the current chain) and preserves any user-edited
+DIFFERENTIATORS / INVARIANTS / GOTCHAS.
 
 ## Brief format
 
 ```
 <revive refresh="N">
-# STATIC  (rarely changes — edit by hand)
-PURPOSE, INVARIANTS, GOTCHAS
+# STATIC  (rarely changes — human-curated via `revive suggest`)
+PURPOSE          what + business goal + hard constraint (2-3 sentences)
+DIFFERENTIATORS  alternatives → our choice / rationale
+INVARIANTS       rules whose breakage causes non-obvious damage
+GOTCHAS          landmines whose fix isn't obvious from code alone
 
 # DYNAMIC (regenerated per refresh)
-STATE      last 3 commits + active branch
+STATE      last 3 commits + active branch; fix/feat commits also
+           surface the first paragraph of their body (PR description
+           for squash-merge workflows)
 TODO       first items from plan.md / TODO.md / ROADMAP.md
-HOT_FILES  top 5 files by commit-frequency (last 20 commits)
-COMMANDS   exact test/lint/build/dev scripts for this repo
+           (searches root + docs/)
+HOT_FILES  top 5 files by commit-frequency (last 20 commits), each
+           annotated with the last commit subject that touched it
+COMMANDS   exact test/lint/build/dev/setup scripts (from package.json
+           / Gemfile + bin/* / Makefile, or .revive/commands.md override)
 </revive>
 ```
 
@@ -79,9 +113,11 @@ code on its own.** We follow that evidence, section by section.
   `package.json` / `Cargo.toml` / `*.gemspec` / `composer.json`
   description → `CLAUDE.md` "What this project is" section →
   filtered README prose. First hit wins.
-- **INVARIANTS** and **GOTCHAS** — user-edited. Research is blunt:
-  *"Human curation yields ~4% performance gains; auto-generation
-  reduces success rates by 0.5–2%"* ([Augment Code, 2026][augment]).
+- **DIFFERENTIATORS**, **INVARIANTS**, **GOTCHAS** — user-curated
+  (typically via `revive suggest`, reviewed before file write).
+  Research is blunt: *"Human curation yields ~4% performance gains;
+  auto-generation reduces success rates by 0.5–2%"* ([Augment Code,
+  2026][augment]).
 - **STATE** — current branch + last 3 commits. Pure `git` output,
   zero interpretation.
 - **TODO** — first bullets from `plan.md` / `TODO.md` / `ROADMAP.md`.
@@ -109,8 +145,8 @@ code on its own.** We follow that evidence, section by section.
   has `Glob` and `Read`. Any dump we inject goes stale the first
   time you move a file.
 - ❌ **Dependency graph** — same class of stale-snapshot hazard.
-- ❌ **Full file contents or patches** — blows the <1800-char budget;
-  the agent has `Read` for the files `HOT_FILES` points to.
+- ❌ **Full file contents or patches** — blows any sane budget; the
+  agent has `Read` for the files `HOT_FILES` points to.
 - ❌ **LLM-summarized anything** in the hot path. Zero-LLM by
   design — the brief must be deterministic and <100ms so the hook
   never stalls a prompt.
