@@ -944,15 +944,23 @@ EOF
 
 # Codex v0.1.13 P2b: the "keep PURPOSE verbatim" path only works if the
 # agent actually reads the current file. Ensure it's in the artefacts list.
-@test "suggest prompt lists .revive/static.md in the files-to-read set" {
-  # create a bare static.md so the check isn't just about prompt text —
-  # suggest's instruction must reference the file explicitly
-  mkdir -p .revive
-  touch .revive/static.md
+@test "suggest prompt lists .revive/static.md as a bullet in the artefacts set" {
+  # Must appear as an actual bullet entry ("  - .revive/static.md") inside
+  # the "Files to read" block — not just in the STEP 2 instruction later.
+  # Use grep -F (fixed string) to require that literal prefix+path combo.
   run "$REVIVE" suggest
   [ "$status" -eq 0 ]
-  # Must explicitly tell the agent to read .revive/static.md
-  [[ "$output" == *".revive/static.md"*"current PURPOSE"* ]] || return 1
+  printf '%s\n' "$output" | grep -qF '  - .revive/static.md' || return 1
+}
+
+@test "suggest prompt restricts 'keep verbatim' permission to PURPOSE" {
+  # INVARIANTS and GOTCHAS must always be regenerated — guard against the
+  # agent reading the top-level phrasing as permission to skip INVARIANTS/
+  # GOTCHAS too. Use grep to avoid [[ ]] globbing quirks across newlines.
+  run "$REVIVE" suggest
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -qF 'Only PURPOSE has an exception' || return 1
+  printf '%s\n' "$output" | grep -qF 'NOT reference material'        || return 1
 }
 
 @test "suggest prints pipe-to-clipboard hint on stderr only" {

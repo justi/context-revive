@@ -698,14 +698,15 @@ PROMPT_META
 
   cat <<'PROMPT_HEADER'
 Read the following artefacts in the current project, then generate a
-PURPOSE line, INVARIANTS section, and GOTCHAS section for a file at
-.revive/static.md. The file ALREADY EXISTS — read it first so you can
-see the current values and decide whether to rewrite or keep each one.
+fresh PURPOSE line, INVARIANTS section, and GOTCHAS section for a
+file at .revive/static.md. INVARIANTS and GOTCHAS must always be
+regenerated from the repo artefacts — never kept from the existing
+file. Only PURPOSE has an exception (see STEP 2).
 
-Files to read (the current `.revive/static.md` is the most important —
-skim it first):
-  - .revive/static.md (current PURPOSE / INVARIANTS / GOTCHAS — read
-    so you can preserve a good PURPOSE verbatim; see STEP 2 below)
+Files to read (`.revive/static.md` is listed first — skim it once so
+you can apply the PURPOSE-verbatim rule in STEP 2):
+  - .revive/static.md (existing PURPOSE only — for the keep-verbatim
+    check; its INVARIANTS/GOTCHAS are NOT reference material)
 PROMPT_HEADER
 
   local s
