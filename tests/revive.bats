@@ -736,6 +736,54 @@ Second paragraph should not leak."
   [[ "$body_line" != *"<!--"* ]]          || return 1
 }
 
+# Codex v0.1.11 P2a: comment-only line inside a paragraph was prematurely
+# terminating the first paragraph.
+@test "state: comment-only line within paragraph does not terminate it" {
+  echo z1 > z1.txt
+  git add z1.txt
+  git commit -q -m "fix: interleaved comment" -m "Line one of paragraph.
+<!-- mid-paragraph note -->
+Line two of paragraph."
+  run "$REVIVE" show
+  local body_line
+  body_line=$(printf '%s\n' "$output" | grep '↪' | head -1)
+  [[ "$body_line" == *"Line one of paragraph."* ]]   || return 1
+  [[ "$body_line" == *"Line two of paragraph."* ]]   || return 1
+  [[ "$body_line" != *"<!--"* ]]                     || return 1
+}
+
+@test "state: multi-line comment block inside paragraph does not terminate it" {
+  echo z2 > z2.txt
+  git add z2.txt
+  git commit -q -m "fix: block comment mid-para" -m "Line one of paragraph.
+<!--
+  block of comment
+  across multiple lines
+-->
+Line two of paragraph."
+  run "$REVIVE" show
+  local body_line
+  body_line=$(printf '%s\n' "$output" | grep '↪' | head -1)
+  [[ "$body_line" == *"Line one of paragraph."* ]]   || return 1
+  [[ "$body_line" == *"Line two of paragraph."* ]]   || return 1
+  [[ "$body_line" != *"block of comment"* ]]         || return 1
+}
+
+# Codex v0.1.11 P2b: inline <!-- ... --> whose body contains ">" broke the
+# regex-based strip.
+@test "state: inline HTML comment containing '>' still strips correctly" {
+  echo z3 > z3.txt
+  git add z3.txt
+  git commit -q -m "fix: gt in comment" -m "Handle case where x > 0 <!-- repro: x > 0 crashed --> properly."
+  run "$REVIVE" show
+  local body_line
+  body_line=$(printf '%s\n' "$output" | grep '↪' | head -1)
+  [[ "$body_line" == *"Handle case where x > 0"* ]]  || return 1
+  [[ "$body_line" == *"properly."* ]]                || return 1
+  [[ "$body_line" != *"<!--"* ]]                     || return 1
+  [[ "$body_line" != *"repro: x > 0 crashed"* ]]     || return 1
+}
+
 @test "state: body excerpt is empty when body is only template (no real content)" {
   echo w > onlytmpl.txt
   git add onlytmpl.txt
