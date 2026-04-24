@@ -3,7 +3,7 @@
 # https://github.com/justi/context-revive
 set -euo pipefail
 
-VERSION="0.1.14"
+VERSION="0.1.15"
 STATIC_FILE=".revive/static.md"
 COMMANDS_FILE=".revive/commands.md"
 BRIEF_CHAR_BUDGET=2200
@@ -800,7 +800,7 @@ Deliverable 1 — PURPOSE (single line, ≤ 400 chars):
        Constraint: job state lives in the app's own Postgres — no
        new infrastructure."
 
-Deliverable 2 — DIFFERENTIATORS (up to 5, or empty):
+Deliverable 2 — DIFFERENTIATORS (up to 7, or empty):
   What makes this project different from the obvious alternatives.
   Competitive positioning, deliberate design choices that contradict
   what another project in the space would do. This class of signal
@@ -828,7 +828,12 @@ Deliverable 2 — DIFFERENTIATORS (up to 5, or empty):
   CLAUDE.md rejected-alternatives notes), leave this section with
   its placeholder — better empty than filler.
 
-Deliverable 3 — INVARIANTS (up to 5):
+Deliverable 3 — INVARIANTS (as many as matter, typically 3-10):
+  Project-size heuristic: a tiny CLI may have 0-3 real rules; a
+  codebase with a formal architecture-rules ADR (e.g. an "ADR 0001"
+  listing 6-9 mandatory rules) needs every one of those captured
+  here — split across bullets, not merged. Missing a rule because
+  you capped at 5 is a failure, not a virtue.
   Architectural or operational rules whose breakage causes non-obvious
   damage. Examples of the *class* of content to produce:
     - decisions captured in ADRs that contradict "obvious" approaches
@@ -847,7 +852,7 @@ Deliverable 3 — INVARIANTS (up to 5):
     - "Never run data migrations on Monday; the cron vacuum window
        overlaps and rollbacks stall."
 
-Deliverable 4 — GOTCHAS (3 to 5):
+Deliverable 4 — GOTCHAS (as many as matter, typically 3-7):
   Landmines whose fix is not obvious from code alone. Dependency quirks,
   rate limits, migrations needing manual steps, config that looks like a
   bug but is deliberate, platform-specific behaviour.
@@ -863,7 +868,15 @@ Deliverable 4 — GOTCHAS (3 to 5):
     - "Migration 20260219_* needs `rails data:migrate` after deploy;
        schema-only deploys leave an unusable null column."
 
-Quality bar: 3 strong rules beat 5 weak ones. Same for gotchas.
+Quality bar: 3 strong rules beat 10 weak ones. But capping at 5 when
+a project has 9 canonical rules is equally wrong — dropping real
+rules for the sake of tidiness means the agent will eventually break
+one it never saw.
+
+The hard ceiling is the Claude Code hook limit (10,000 chars).
+context-revive's soft budget is 2,200. Briefs at 3,000-4,000 chars
+are still well within the hook cap and fine for rich projects with
+formal architecture rules. Don't self-censor for aesthetic reasons.
 
 Required output format (exact indentation, no code fences, no
 commentary). PURPOSE is a single line; DIFFERENTIATORS, INVARIANTS,
