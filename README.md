@@ -2,25 +2,13 @@
 
 > Your side project died at 80%. Bring it back in one prompt.
 
-Claude Code forgets your project halfway through long sessions.
-Auto-compaction eats architectural context, old tokens fall out of
-the window, the agent starts asking questions the README answered.
+**Re-inject a dense, deterministic project brief into Claude Code every few
+prompts, before context rot degrades the agent.** You edit `.revive/static.md`
+once (or let an LLM draft it from your ADRs); the brief auto-refreshes on a
+cadence, wired through the `UserPromptSubmit` hook.
 
-`context-revive` generates a dense, deterministic brief and
-re-injects it into the session on a fixed cadence — the Anthropic
-pattern called **structured note-taking**, wired through the
-`UserPromptSubmit` hook.
-
-One bash script. Zero runtime dependencies on the hot path — the
-`refresh` hook calls only `bash` and `git`. No Python, no Node, no
-compiled binary.
-
-**What it is:** a standalone CLI tool, not a plugin — it runs as a
-separate process. Claude Code gets first-class integration via the
-`UserPromptSubmit` hook (installed by `revive install-hook`). Other
-agents (Cursor, Aider, any chat LLM with file access) use the same
-brief via paste: `revive show | pbcopy`, `revive suggest | pbcopy`,
-`revive audit | pbcopy`.
+One bash script, zero runtime on the hot path. Works with any agent via paste
+(`revive show | pbcopy`); Claude Code gets first-class hook integration.
 
 ## Install
 
@@ -28,312 +16,230 @@ brief via paste: `revive show | pbcopy`, `revive suggest | pbcopy`,
 curl -fsSL https://raw.githubusercontent.com/justi/context-revive/main/install.sh | bash
 ```
 
-Requires:
+Requires `bash` + `git`. Optional: `jq` (for `install-hook`), `gh` (for
+best-quality PURPOSE auto-detection).
 
-- **Hot path (every refresh):** `bash`, `git`. Nothing else.
-- **One-off setup:** `jq` for `revive install-hook`; `gh` is optional
-  for best-quality PURPOSE extraction during `revive init`. Both are
-  used once, never from the hook.
+## Do I need this?
 
-### Upgrade to a new version
+Use this if you keep hitting the same failure in Claude Code: 30 prompts in,
+the agent forgets an ADR, re-suggests an approach you already rejected, or
+asks questions `CLAUDE.md` already answered. You probably don't need it if
+your sessions are short (<15 prompts), CLAUDE.md stays under 1k tokens, or
+you already restart sessions frequently.
 
-Re-run the install script. It fetches the latest `bin/revive`
-from `main` and writes over `~/.local/bin/revive`. Your per-project
-`.revive/static.md` files and Claude Code hook settings are NOT
-touched:
+Not a replacement for `CLAUDE.md`, Cursor Rules, or `AGENTS.md` — those load
+once at session start and get summarized away by AutoCompact. This keeps
+your curated facts *fresh in the recent attention window*, complementary to
+them.
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/justi/context-revive/main/install.sh | bash
-revive version   # confirm you got the new tag
+## Example
+
+After `revive init` + `revive suggest` on a real repo (armillary, 19 ADRs),
+Claude Code's `UserPromptSubmit` hook receives this on every 5th prompt:
+
+```
+<revive refresh="7">
+# STATIC  (from .revive/static.md — human-curated, stable across refreshes)
+PURPOSE: Local-first memory layer for solo devs carrying 50-200 git repos.
+Success metric is DORMANT→ACTIVE transitions (ADR 0025), not MRR —
+deliberately open-source, SQLite-only, no cloud.
+
+DIFFERENTIATORS:
+  - Pure activity ranking tools → ranks for revival value, not recency (ADR 0008)
+  - Embeddings / semantic retrieval → ripgrep-only Steal v1, 40-line windows (ADR 0027)
+
+INVARIANTS:
+  - No migrations: bump PRAGMA user_version → drop + rebuild (ADR 0004). Never ALTER TABLE.
+  - Services never `import streamlit`; must be importable + testable without it (ADR 0001 rules 2, 8)
+  - Classification heuristics require panel review (Pieter/Marc/Arvid/Harry) BEFORE code.
+
+GOTCHAS:
+  - CI runs `ruff format --check`; local `ruff check .` passes while CI fails — run BOTH.
+  - `~/Projects_new/` is auto-generated; v2/v3/v4 patterns there are NOT user behavior.
+
+# DYNAMIC  (regenerated per refresh from git + fs)
+STATE: branch=main
+  a3c09e6 feat: implement ADR 0027 Steal — cross-repo ranked code retrieval
+      ↪ Ripgrep-only v1 per panel review: 40-line windows, two ranking signals…
+  e4fe8d4 refactor: split 5 oversized modules under 400-line target (#32)
+
+HOT_FILES: (last 20 commits, last change shown)
+  11× README.md       ↪ "docs: add docs/mcp.md — MCP runtime reference"
+   3× cli.py          ↪ "refactor: split 5 oversized modules under 400-line target"
+   3× detail.py       ↪ "refactor: split 5 oversized modules under 400-line target"
+</revive>
 ```
 
-If a new version changes the shape of the brief (new section,
-renamed field), you may want to regenerate your static file too:
-
-```bash
-cd your-project
-revive init --force       # regenerate PURPOSE; preserve DIFFERENTIATORS / INVARIANTS / GOTCHAS
-# OR (full reset):
-rm -rf .revive && revive init && revive suggest | pbcopy
-```
-
-The release notes on GitHub flag when a version adds new sections
-or changes behavior that warrants regenerating.
+Ask this Claude Code: *"What's the success metric for this project?"* — the
+agent answers *"DORMANT→ACTIVE transitions (ADR 0025), not MRR"* straight
+from the brief, not by re-reading files. 30 prompts in, 100 prompts in, the
+answer stays.
 
 ## Quick start
 
 ```bash
 cd your-project
 revive init              # scaffold .revive/static.md (PURPOSE auto-detected)
-revive suggest | pbcopy  # generate DIFFERENTIATORS / INVARIANTS / GOTCHAS — paste into current session
-revive audit   | pbcopy  # second-pass gap audit — paste into FRESH session
+revive suggest | pbcopy  # paste into active agent — fills DIFFERENTIATORS/INVARIANTS/GOTCHAS
+revive audit   | pbcopy  # paste into FRESH session — second-pass gap audit
 revive install-hook      # wire UserPromptSubmit into .claude/settings.json
 revive show              # preview the brief
 ```
 
-Every 5th prompt (or after 10 min / first call) Claude Code gets the
-brief prepended to context — deterministic, <100ms, <10k chars
-(Claude Code hook limit).
+The two-pass flow (`suggest` then `audit` in a fresh session) is deliberate:
+a single session that both generates and audits its own output suffers from
+context saturation and self-critique sycophancy. Fresh context finds gaps
+the generation pass can't.
 
-### Filling PURPOSE / DIFFERENTIATORS / INVARIANTS / GOTCHAS with your agent
+## Most useful next
 
-Two-pass flow — designed deliberately:
+Everything below is optional — the quick start gives you a working hook.
 
-1. **`revive suggest`** — generation pass. Prints a project-tailored
-   LLM prompt that lists your actual CLAUDE.md / ADRs / HOT_FILES
-   and asks the agent to fill any still-placeholder sections
-   end-to-end. Paste it into Claude Code / Cursor / Aider — the
-   agent previews the output, then edits `.revive/static.md`
-   for you.
+- **[What the source file looks like](#what-revivestaticmd-looks-like)** —
+  four sections, flat text, 2–5 KB typical.
+- **[How often the brief is injected](#how-often-the-brief-is-injected)** —
+  cadence rules, env vars for tuning (`REVIVE_REFRESH_EVERY`,
+  `REVIVE_REFRESH_TIME_GAP`).
+- **[Token cost](#token-cost-in-practice)** — measured ~2–3k tokens per
+  emit, ~1.5% of Opus 4.7 1M context across a 30-prompt session.
+- **[Reset / regenerate from scratch](#reset--regenerate-from-scratch)** —
+  `rm -rf .revive && revive init && revive suggest | pbcopy` when
+  `.revive/static.md` has drifted.
+- **[Upgrade to a new release](#upgrade-to-a-new-version)** — re-run
+  `install.sh`. Per-project state preserved.
 
-2. **`revive audit`** — gap-audit pass, in a **fresh agent session**.
-   Prints a separate prompt that re-reads the file + artefacts and
-   scans against a 6-category checklist (toolchain specifics,
-   skill-file discipline, workflow dichotomies, privacy/OpSec,
-   cross-ADR process rules, convention collisions). Proposes
-   additional bullets for anything the generation pass missed.
+## Reference
 
-The two steps use separate LLM calls on purpose: a single session
-that both generates and audits its own output suffers from context
-saturation (tired attention by STEP 2) and self-critique sycophancy
-(agents tend to rubber-stamp their own recent writes). A fresh
-session — new Claude Code window, `/clear` in the current one, new
-Cursor chat tab — catches gaps the first pass can't.
+### What `.revive/static.md` looks like
 
-Research is blunt: *"Human curation yields ~4% performance gains;
-auto-generation reduces success rates by 0.5–2%"* — so the agent
-is explicitly told NOT to rewrite sections that already contain
-real content. Re-runs are idempotent; audit only ever APPENDS.
-
-### Reset / regenerate from scratch
-
-If `.revive/static.md` drifted (old PURPOSE extracted before v0.1.2
-chain, stale rules, accidentally-preserved marketing tagline), start
-over cleanly:
-
-```bash
-cd your-project
-rm -rf .revive           # drop old static.md + any other revive state
-revive init              # fresh scaffold with current chain
-revive suggest | pbcopy  # agent prompt for DIFFERENTIATORS/INVARIANTS/GOTCHAS
-#   → paste into Claude Code / Cursor / Aider session
-#   → agent writes the file end-to-end
-revive audit   | pbcopy  # second-pass gap audit
-#   → paste into a FRESH session (/clear, new tab, etc.)
-#   → agent proposes additional bullets the first pass missed
-revive show              # verify
-```
-
-Lighter alternative: `revive init --force` regenerates only PURPOSE
-(from the current chain) and preserves any user-edited
-DIFFERENTIATORS / INVARIANTS / GOTCHAS.
-
-## What `.revive/static.md` looks like
-
-The file you edit (either directly, or through `revive suggest` +
-`revive audit`) lives at `.revive/static.md` in the repo. Four
-sections, flat text, no wrapper:
+Four flat sections you edit directly (or via `suggest` + `audit`):
 
 ```
-PURPOSE: <single 2-3 sentence summary — what + business goal + hard constraint>
+PURPOSE: <2-3 sentence summary — what + business goal + hard constraint>
 DIFFERENTIATORS:
   - <alternative> → <our choice / rationale>
-  - <...>
 INVARIANTS:
   - <rule whose breakage causes non-obvious damage>
-  - <...>
 GOTCHAS:
   - <landmine whose fix isn't obvious from code alone>
-  - <...>
 ```
 
-Real example from a dogfooded repo (abridged — real files often run
-12+ INVARIANTS and 6+ GOTCHAS):
+The file is checked in. `revive show` assembles the brief around it on each
+refresh. Placeholder-only sections (still saying *"(edit this file)"*) are
+suppressed from the brief — no noise.
 
-```
-PURPOSE: Shell-script CLI that re-injects a dense project brief
-into Claude Code via UserPromptSubmit hook. Success metric: agents
-stop asking questions CLAUDE.md already answered. Bash-only, zero-
-LLM on the hot path — works on any dev machine.
-DIFFERENTIATORS:
-  - repomix / code2prompt one-shot dump → revive injects small briefs on a cadence counter
-  - Static Cursor Rules / CLAUDE.md prepend → revive regenerates DYNAMIC from git + fs per emit
-  - Provider-locked tools (Cursor Background Agents) → paste workflow works with any agent
-INVARIANTS:
-  - Hot path (refresh) must be zero-LLM, <100ms, <10k chars (hook cap)
-  - Hook failures stay silent; log to ~/.context-revive/hook.log
-  - `suggest` and `audit` are separate LLM calls — never bundle generation + critique
-GOTCHAS:
-  - `set -euo pipefail` + silent-failure: `cmd_refresh` must `set +e` internally
-  - bats-core fails only on LAST command exit — intermediate `[[ ]]` asserts need `|| return 1`
-```
+### How often the brief is injected
 
-The file is checked in. It's the human-curated source of truth;
-`revive show` assembles the brief around it each refresh.
-
-## Brief format (what Claude Code actually receives)
-
-Per emit, the hook streams this block to Claude Code as a
-`<system-reminder>`:
-
-```
-<revive refresh="N">
-# STATIC  (read directly from .revive/static.md)
-PURPOSE, DIFFERENTIATORS, INVARIANTS, GOTCHAS
-
-# DYNAMIC (regenerated per refresh from git + fs)
-STATE      last 3 commits + active branch; fix/feat commits also
-           surface the first paragraph of their body (PR description
-           for squash-merge workflows)
-TODO       first items from plan.md / TODO.md / ROADMAP.md
-           (searches root + docs/)
-HOT_FILES  top 5 files by commit-frequency (last 20 commits), each
-           annotated with the last commit subject that touched it
-COMMANDS   exact test/lint/build/dev/setup scripts (from package.json
-           / Gemfile + bin/* / Makefile, or .revive/commands.md override)
-</revive>
-```
-
-`N` is the refresh counter stored at `.claude/revive-counter`.
-Placeholder-only sections (INVARIANTS that still says "edit this
-file") are omitted entirely — they'd be pure noise in the agent's
-context.
-
-## How often the brief is injected
-
-Every call to the `UserPromptSubmit` hook passes through a cadence
-gate in `revive refresh`. The brief emits when ANY of these is true:
+Emits when ANY of these is true:
 
 1. **First prompt of the session** (counter = 1).
-2. **Every 5th prompt after that** (5, 10, 15, …), controlled by
-   `REVIVE_REFRESH_EVERY` (default `5`).
-3. **Gap of >10 minutes** since the last emit, regardless of
-   counter, controlled by `REVIVE_REFRESH_TIME_GAP` (default `600`
-   seconds). Picks up where the last session left off after a break.
+2. **Every 5th prompt after that**, via `REVIVE_REFRESH_EVERY` (default `5`).
+3. **Gap of >10 minutes** since the last emit, via `REVIVE_REFRESH_TIME_GAP`
+   (default `600` seconds).
 
-Prompts between emits see NOTHING from revive — silent skip,
-zero token cost. This is deliberate: brief repeats on every prompt
-would burn tokens and desensitize the agent to the content.
-
-Adjust the cadence per shell:
+Prompts between emits see nothing from revive — silent skip, zero cost.
+Tune in your shell:
 
 ```bash
-export REVIVE_REFRESH_EVERY=3        # every 3rd prompt instead of 5th
+export REVIVE_REFRESH_EVERY=3        # every 3rd prompt
 export REVIVE_REFRESH_TIME_GAP=300   # 5-minute gap threshold
 ```
 
-## Token cost in practice
+### Token cost in practice
 
-Measured on a rich-architecture project (Python + Streamlit + 19
-ADRs, `.revive/static.md` ≈ 4 KB with 12 INVARIANTS, 8 GOTCHAS):
+Measured on a rich-architecture project (Python + Streamlit + 19 ADRs,
+`.revive/static.md` ≈ 4 KB with 12 INVARIANTS, 8 GOTCHAS):
 
-- **Brief per emit:** ~2–3k tokens (Polish/English mix with
-  unicode glyphs runs ~2.5 chars/token; English-only repos land
-  closer to ~1.5k).
-- **Emit every 5 prompts.** In a 30-prompt session that's 6 emits
-  × ~2.5k = **~15k tokens total** across the session.
-- **Fraction of Opus 4.7 1M context:** ~1.5% per session.
-- **Claude Code hook hard limit:** 10k chars per emit; revive stays
-  well under (our biggest observed brief is ~4.3 KB / ~1.7k tokens).
+| Scope | Tokens | % of Opus 4.7 1M |
+|---|---|---|
+| Brief per emit | ~2–3k | ~0.25% |
+| 30-prompt session (6 emits) | ~15k | ~1.5% |
+| Claude Code hook hard cap | 10k chars per emit | — |
 
-Compare to a static CLAUDE.md loaded once at session start (say
-2.7k tokens): equal or cheaper for short sessions, ~3× for long
-ones — but survives AutoCompact. The whole point of revive is that
-the agent's attention on these facts doesn't degrade as tokens
-drift out of the window.
+English-only repos land closer to ~1.5k per emit; Polish/mixed with unicode
+glyphs runs higher. Measure your own by running `/context` before and after
+a prompt that triggers the hook — the delta in `Messages` is the emit cost.
 
-Measure in your own session with Claude Code's `/context` command
-before and after sending a prompt (which triggers the hook). The
-delta in the `Messages` bucket = the emit cost.
+### Reset / regenerate from scratch
 
-## Design — what goes in the brief, and why
+If `.revive/static.md` drifted (old extractor, stale rules, marketing-tagline
+PURPOSE slipped in):
 
-2026 research on context engineering for coding agents converges on
-one principle: **re-inject only what the agent can't re-derive from
-code on its own.** We follow that evidence, section by section.
+```bash
+cd your-project
+rm -rf .revive
+revive init
+revive suggest | pbcopy          # paste → agent rewrites the file end-to-end
+revive audit   | pbcopy          # paste into FRESH session → agent fills gaps
+revive show                      # verify
+```
+
+Lighter alternative: `revive init --force` regenerates only `PURPOSE` and
+preserves user-edited `DIFFERENTIATORS` / `INVARIANTS` / `GOTCHAS`.
+
+### Upgrade to a new version
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/justi/context-revive/main/install.sh | bash
+revive version
+```
+
+Re-writes `~/.local/bin/revive`. Per-project `.revive/static.md` files and
+Claude Code hook settings are not touched. Release notes flag when a
+version adds a new section and you may want `revive init --force` to
+regenerate scaffolding.
+
+## Design notes
 
 ### What goes in (evidence-backed non-inferable facts)
 
-- **PURPOSE** — a curated 1-liner. Extracted from a fallback chain:
-  `gh repo view --json description` → `pyproject.toml` /
-  `package.json` / `Cargo.toml` / `*.gemspec` / `composer.json`
-  description → `CLAUDE.md` "What this project is" section →
-  filtered README prose. First hit wins.
-- **DIFFERENTIATORS**, **INVARIANTS**, **GOTCHAS** — user-curated
-  (typically via `revive suggest`, reviewed before file write).
-  Research is blunt: *"Human curation yields ~4% performance gains;
-  auto-generation reduces success rates by 0.5–2%"* ([Augment Code,
-  2026][augment]).
-- **STATE** — current branch + last 3 commits. Pure `git` output,
-  zero interpretation.
-- **TODO** — first bullets from `plan.md` / `TODO.md` / `ROADMAP.md`.
-  Again, whatever the repo already has.
-- **HOT_FILES** — top 5 files by commit-frequency over the last 20
-  commits, each annotated with the last commit subject that touched
-  it. Framework-agnostic signal of "where work actually concentrates"
-  (Rails `bin/kamal` / `bin/brakeman` scaffolding can't compete with
-  files you keep reaching for).
-- **COMMANDS** — exact invocations: `test:`, `lint:`, `build:`,
-  `dev:`. Extracted from `package.json scripts` / `Makefile` /
-  Rails `bin/*`, or overridden by `.revive/commands.md`. These are
-  the canonical class of non-inferable facts an agent needs ([AGENTS.md
-  guide, 2026][augment]).
+- **PURPOSE** — curated 1-liner. Chain: `gh repo view --json description` →
+  manifest `description` (pyproject, package.json, Cargo, gemspec,
+  composer) → `CLAUDE.md` → filtered README. First hit wins.
+- **DIFFERENTIATORS, INVARIANTS, GOTCHAS** — human-curated (via `suggest` +
+  `audit`, user-reviewed). Research: *"Human curation yields ~4%
+  performance gains; auto-generation reduces success rates by 0.5–2%"*
+  ([Augment Code, 2026][augment]).
+- **STATE** — `git` branch + last 3 commits, with body excerpt for
+  fix/feat/refactor commits (surfaces PR descriptions for squash-merge
+  workflows).
+- **HOT_FILES** — top 5 files by commit-frequency over the last 20 commits,
+  each annotated with the last commit subject.
+- **COMMANDS** — exact test/lint/build/dev invocations from `package.json`
+  / Rails `bin/*` / `Makefile` / `.revive/commands.md` override.
 
 ### What we deliberately don't inject
 
-- ❌ **Auto-generated architecture overview** — the Augment Code
-  research on `AGENTS.md` is explicit: *"Directory trees cause stale
-  structural references that mislead agents"*, and auto-generated
-  overviews **reduce** agent success rate by 0.5–2% while increasing
-  cost 20%+. If you want an architecture summary, write it by hand
-  into `INVARIANTS` / `GOTCHAS`.
-- ❌ **Directory tree / file listing** — same reasoning. The agent
-  has `Glob` and `Read`. Any dump we inject goes stale the first
-  time you move a file.
-- ❌ **Dependency graph** — same class of stale-snapshot hazard.
-- ❌ **Full file contents or patches** — blows any sane budget; the
-  agent has `Read` for the files `HOT_FILES` points to.
-- ❌ **LLM-summarized anything** in the hot path. Zero-LLM by
-  design — the brief must be deterministic and <100ms so the hook
-  never stalls a prompt.
+Auto-generated architecture overview, directory tree, dependency graph,
+full file contents, LLM-summarized anything on the hot path. Evidence:
+*"Directory trees cause stale structural references that mislead agents"*,
+and auto-generated summaries reduce agent success rate by 0.5–2% while
+increasing cost 20%+ ([Augment Code, 2026][augment]). If you want an
+architecture summary in the brief, write it by hand into `INVARIANTS`.
 
-### Substrate / projection separation
+### Complementary to AutoCompact
 
-Current 2026 consensus ([Zylos, 2026][zylos]) splits context into
-a stable cacheable prefix and a fresh per-turn suffix. Our brief
-maps cleanly: `STATIC` is the cacheable prefix (one human-curated
-file per project), `DYNAMIC` is the fresh suffix regenerated every
-emit.
+Anthropic's AutoCompact fires at the context-window ceiling — it
+summarises the conversation to make room. revive addresses a different
+failure: **context rot**, where the agent forgets as tokens drift out of
+attention long before AutoCompact triggers. Cadence-based re-injection
+keeps key facts in the recent window ([Zylos, 2026][zylos] splits context
+into stable prefix + fresh suffix — our STATIC/DYNAMIC split maps cleanly).
 
-### Complementary to AutoCompact, not competing
+### Why a shell script?
 
-Anthropic's AutoCompact fires when the context window approaches its
-ceiling — it summarises the conversation to make room. revive
-addresses a different failure: **context rot**, where the agent
-forgets as tokens drift out of attention long before AutoCompact
-triggers. Cadence-based re-injection keeps key facts in the recent
-window. See the "How often the brief is injected" and "Token cost
-in practice" sections above for the exact mechanics and cost.
+Zero runtime. `<100ms` cold start. Transparent — `cat $(which revive)`.
+One file to audit, no dependency tree. The point of this repo is that it
+works on any dev machine without installing a language toolchain.
 
 [augment]: https://www.augmentcode.com/guides/how-to-build-agents-md
 [zylos]: https://zylos.ai/research/2026-03-17-dynamic-context-assembly-projection-llm-agent-runtimes
 
-## Why a shell script?
-
-- **Zero runtime** — bash is on every dev machine.
-- **<100ms cold start** — hot-path friendly.
-- **Transparent** — `cat $(which revive)` and read it all.
-- **One file to audit** — no dependency tree.
-
-## Why not a longer CLAUDE.md?
-
-CLAUDE.md loads once at session start. Sixty prompts later it's
-compacted. `context-revive` refreshes on cadence so the brief stays
-in the recent window where the agent actually attends.
-
 ## Status
 
-Pre-alpha. Weekend MVP.
+Pre-alpha. Weekend MVP in active dogfooding. **v0.1.17** — `revive audit`
+as separate fresh-session LLM call; 111 bats tests pass; see
+[Releases](https://github.com/justi/context-revive/releases) for history.
 
 ## License
 
