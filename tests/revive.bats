@@ -916,20 +916,116 @@ EOF
 }
 
 @test "suggest prompt requests PURPOSE as Deliverable 1 (v0.1.13)" {
+  # After v0.1.14 DIFFERENTIATORS slots in as Deliverable 2 — keep this
+  # test narrow: PURPOSE must be Deliverable 1.
   run "$REVIVE" suggest
   [ "$status" -eq 0 ]
-  [[ "$output" == *"Deliverable 1 — PURPOSE"* ]]   || return 1
-  [[ "$output" == *"Deliverable 2 — INVARIANTS"* ]] || return 1
-  [[ "$output" == *"Deliverable 3 — GOTCHAS"* ]]   || return 1
+  [[ "$output" == *"Deliverable 1 — PURPOSE"* ]] || return 1
+}
+
+@test "suggest PURPOSE deliverable requires business goals (v0.1.14)" {
+  # Marketing one-liners are no longer "substantive" — PURPOSE must
+  # cover what + why (business goal) + essential constraint.
+  run "$REVIVE" suggest
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -qF 'business goal or success criterion' || return 1
+  printf '%s\n' "$output" | grep -qF 'All three must be present'           || return 1
+  # Placeholder classification must explicitly cover marketing-tagline state
+  printf '%s\n' "$output" | grep -qF "what success"                         || return 1
+}
+
+# DIFFERENTIATORS section (v0.1.14)
+
+@test "init scaffolds DIFFERENTIATORS section alongside others" {
+  run "$REVIVE" init
+  [ "$status" -eq 0 ]
+  run cat .revive/static.md
+  [[ "$output" == *"DIFFERENTIATORS:"* ]]                   || return 1
+  [[ "$output" == *"what sets this project apart"* ]]       || return 1
+  # section ordering: PURPOSE → DIFFERENTIATORS → INVARIANTS → GOTCHAS
+  local purp_line diff_line inv_line got_line
+  purp_line=$(printf '%s\n' "$output" | grep -n '^PURPOSE:'         | cut -d: -f1)
+  diff_line=$(printf '%s\n' "$output" | grep -n '^DIFFERENTIATORS:' | cut -d: -f1)
+  inv_line=$(printf '%s\n' "$output" | grep -n '^INVARIANTS:'       | cut -d: -f1)
+  got_line=$(printf '%s\n' "$output" | grep -n '^GOTCHAS:'          | cut -d: -f1)
+  [ "$purp_line" -lt "$diff_line" ] || return 1
+  [ "$diff_line" -lt "$inv_line" ]  || return 1
+  [ "$inv_line" -lt "$got_line" ]   || return 1
+}
+
+@test "show skips placeholder DIFFERENTIATORS bullets" {
+  "$REVIVE" init
+  run "$REVIVE" show
+  # header stays for structure, placeholder bullet must not leak
+  [[ "$output" == *"DIFFERENTIATORS:"* ]]        || return 1
+  [[ "$output" != *"what sets this project"* ]]  || return 1
+}
+
+@test "show keeps substantive DIFFERENTIATORS bullets intact" {
+  mkdir -p .revive
+  cat > .revive/static.md <<'EOF'
+PURPOSE: Test project.
+DIFFERENTIATORS:
+  - Unlike cron — code-defined schedules that survive deploys.
+  - Unlike SaaS schedulers — zero new infrastructure.
+INVARIANTS:
+GOTCHAS:
+EOF
+  run "$REVIVE" show
+  [[ "$output" == *"Unlike cron"* ]]              || return 1
+  [[ "$output" == *"zero new infrastructure"* ]] || return 1
+}
+
+@test "init --force preserves substantive DIFFERENTIATORS across PURPOSE regen" {
+  mkdir -p .revive
+  cat > .revive/static.md <<'EOF'
+PURPOSE: old stale purpose
+DIFFERENTIATORS:
+  - Custom differentiator 1.
+  - Custom differentiator 2.
+INVARIANTS:
+  - user rule 1
+GOTCHAS:
+  - user gotcha 1
+EOF
+  printf '{"description":"fresh purpose"}\n' > package.json
+  run "$REVIVE" init --force
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"DIFFERENTIATORS/INVARIANTS/GOTCHAS preserved"* ]] || return 1
+  run cat .revive/static.md
+  [[ "$output" == *"Custom differentiator 1."* ]] || return 1
+  [[ "$output" == *"Custom differentiator 2."* ]] || return 1
+  [[ "$output" == *"user rule 1"* ]]              || return 1
+  [[ "$output" == *"user gotcha 1"* ]]            || return 1
+  [[ "$output" == *"fresh purpose"* ]]            || return 1
+}
+
+@test "suggest prompt introduces DIFFERENTIATORS as Deliverable 2" {
+  run "$REVIVE" suggest
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Deliverable 1 — PURPOSE"* ]]          || return 1
+  [[ "$output" == *"Deliverable 2 — DIFFERENTIATORS"* ]]  || return 1
+  [[ "$output" == *"Deliverable 3 — INVARIANTS"* ]]       || return 1
+  [[ "$output" == *"Deliverable 4 — GOTCHAS"* ]]          || return 1
+}
+
+@test "suggest prompt lists DIFFERENTIATORS placeholder marker" {
+  # "what sets this project apart" wraps across two lines in the prompt;
+  # assert the left half which is line-complete.
+  run "$REVIVE" suggest
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -qF 'what sets this project' || return 1
 }
 
 @test "suggest prompt tells agent to preserve substantive sections across the board" {
-  # Semantics: existing human-curated content in PURPOSE / INVARIANTS /
-  # GOTCHAS must survive a re-run. Only placeholder sections get rewritten.
+  # Semantics: existing human-curated content in any STATIC section must
+  # survive a re-run. Only placeholder sections get rewritten.
+  # (String "preserved verbatim" is line-wrapped in the prompt; check
+  # for the sentinel words on their own lines.)
   run "$REVIVE" suggest
   [ "$status" -eq 0 ]
   printf '%s\n' "$output" | grep -qF 'Treat existing human-' || return 1
-  printf '%s\n' "$output" | grep -qF 'preserved verbatim'    || return 1
+  printf '%s\n' "$output" | grep -qF 'verbatim'              || return 1
   printf '%s\n' "$output" | grep -qF 'placeholder state'     || return 1
 }
 
