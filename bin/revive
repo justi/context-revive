@@ -3,7 +3,7 @@
 # https://github.com/justi/context-revive
 set -euo pipefail
 
-VERSION="0.1.8"
+VERSION="0.1.9"
 STATIC_FILE=".revive/static.md"
 COMMANDS_FILE=".revive/commands.md"
 BRIEF_CHAR_BUDGET=2200
@@ -46,11 +46,48 @@ log() {
 
 # --- DYNAMIC section builders -----------------------------------------------
 
+# Extract the first paragraph of a commit's body, joined to a single line,
+# truncated to 100 chars with a `…` suffix. Returns non-zero when no usable
+# body exists — caller should skip the body line entirely.
+#
+# Rationale: commit subjects carry the "what", bodies carry the "why" /
+# root-cause / approach — the essence users reach for when debugging later.
+# For squash-merge workflows, commit body === PR body, so this also
+# surfaces PR descriptions without needing `gh` at runtime.
+commit_body_excerpt() {
+  local sha="$1"
+  local body
+  body=$(git log -1 --pretty=%b "$sha" 2>/dev/null) || return 1
+  [[ -n "$body" ]] || return 1
+  local para
+  para=$(awk '
+    BEGIN { p = "" }
+    /^$/  { if (p != "") exit; next }
+    { p = (p == "" ? $0 : p " " $0) }
+    END { print p }
+  ' <<<"$body")
+  para=$(sed 's/  */ /g; s/^ //; s/ $//' <<<"$para")
+  [[ -n "$para" ]] || return 1
+  local max=100
+  if (( ${#para} > max )); then
+    para="${para:0:$max}…"
+  fi
+  printf '%s\n' "$para"
+}
+
 dyn_state() {
   local branch
   if branch=$(git symbolic-ref --short HEAD 2>/dev/null); then
     echo "STATE: branch=${branch}"
-    git log --oneline -3 2>/dev/null | sed 's/^/  /' || true
+    local sha subj body
+    while IFS= read -r sha; do
+      [[ -z "$sha" ]] && continue
+      subj=$(git log -1 --pretty=%s "$sha" 2>/dev/null || true)
+      printf '  %s %s\n' "${sha:0:7}" "$subj"
+      if body=$(commit_body_excerpt "$sha") && [[ -n "$body" ]]; then
+        printf '      ↪ %s\n' "$body"
+      fi
+    done < <(git log --pretty=%H -3 2>/dev/null || true)
   elif git rev-parse --git-dir >/dev/null 2>&1; then
     echo "STATE: (git repo, no commits yet)"
   else

@@ -591,6 +591,73 @@ EOF
   [ "${#output}" -lt 1800 ]
 }
 
+@test "state: commit body excerpt rendered under subject when present" {
+  # Create a commit with a real body paragraph
+  echo "a" > f.txt
+  git add f.txt
+  git commit -q -m "fix(core): guard against empty input" -m "Empty input crashed the parser because the regex matched nothing."
+  run "$REVIVE" show
+  [[ "$output" == *"fix(core): guard against empty input"* ]]   || return 1
+  [[ "$output" == *"↪ Empty input crashed the parser"* ]]       || return 1
+}
+
+@test "state: no body line emitted for subject-only commits" {
+  # Setup's initial commit was created with --allow-empty and no body.
+  # Add another subject-only commit to be sure.
+  echo x > g.txt
+  git add g.txt
+  git commit -q -m "chore: add g"
+  run "$REVIVE" show
+  [[ "$output" == *"chore: add g"* ]] || return 1
+  # The bullet immediately after "chore: add g" must not be an arrow line.
+  # Extract the line following the subject and check it's not `↪`.
+  local next_line
+  next_line=$(printf '%s\n' "$output" | grep -A1 'chore: add g' | tail -1)
+  [[ "$next_line" != *"↪"* ]] || return 1
+}
+
+@test "state: long body paragraph truncated to ~100 chars with ellipsis" {
+  echo y > h.txt
+  git add h.txt
+  local long_body
+  long_body=$(printf 'x %.0s' {1..120})
+  git commit -q -m "fix: long body" -m "$long_body"
+  run "$REVIVE" show
+  # Find the ↪ line in output
+  local body_line
+  body_line=$(printf '%s\n' "$output" | grep '↪' | head -1)
+  [[ -n "$body_line" ]]           || return 1
+  [[ "$body_line" == *"…"* ]]     || return 1
+  # Line is: "      ↪ <100 chars>…" — total 6+2+100+1 ≈ 109-110 chars
+  [ "${#body_line}" -le 115 ] || return 1
+}
+
+@test "state: body paragraph collapses multi-line wrap into one line" {
+  echo z > i.txt
+  git add i.txt
+  # Body with hard-wrapped lines (no blank line between them)
+  git commit -q -m "fix: wrapped body" -m "Line one of the paragraph
+Line two still same paragraph
+Line three still same."
+  run "$REVIVE" show
+  local body_line
+  body_line=$(printf '%s\n' "$output" | grep '↪' | head -1)
+  [[ "$body_line" == *"Line one of the paragraph Line two still same paragraph Line three still same."* ]] || return 1
+}
+
+@test "state: body extraction stops at first blank line (skips trailers)" {
+  echo w > j.txt
+  git add j.txt
+  git commit -q -m "feat: with trailers" -m "Real first paragraph content.
+
+Co-Authored-By: Bot <bot@example.com>"
+  run "$REVIVE" show
+  local body_line
+  body_line=$(printf '%s\n' "$output" | grep '↪' | head -1)
+  [[ "$body_line" == *"Real first paragraph content."* ]] || return 1
+  [[ "$body_line" != *"Co-Authored-By"* ]]                || return 1
+}
+
 @test "show reports git branch in STATE" {
   run "$REVIVE" show
   [[ "$output" == *"branch="* ]]
