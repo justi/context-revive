@@ -83,17 +83,18 @@ answer stays.
 
 ```bash
 cd your-project
-revive init              # scaffold .revive/static.md (PURPOSE auto-detected)
-revive suggest | pbcopy  # paste into active agent — fills DIFFERENTIATORS/INVARIANTS/GOTCHAS
-revive audit   | pbcopy  # paste into FRESH session — second-pass gap audit
-revive install-hook      # wire UserPromptSubmit into .claude/settings.json
-revive show              # preview the brief
+revive init              # scaffold .revive/static.md; PURPOSE auto-detected, 3 sections left as placeholders
+revive suggest | pbcopy  # paste into active agent — agent rewrites PURPOSE/DIFFERENTIATORS/INVARIANTS/GOTCHAS
+revive audit   | pbcopy  # paste into a FRESH session — agent proposes bullets the first pass missed
+revive install-hook      # wire UserPromptSubmit hook into .claude/settings.json
+revive show              # preview the assembled brief (forced emit, ignores cadence)
 ```
 
 The two-pass flow (`suggest` then `audit` in a fresh session) is deliberate:
 a single session that both generates and audits its own output suffers from
 context saturation and self-critique sycophancy. Fresh context finds gaps
-the generation pass can't.
+the generation pass can't. `suggest` rewrites placeholder sections;
+`audit` only APPENDS bullets to existing sections after your approval.
 
 ## Most useful next
 
@@ -116,21 +117,46 @@ Everything below is optional — the quick start gives you a working hook.
 
 ### What `.revive/static.md` looks like
 
-Four flat sections you edit directly (or via `suggest` + `audit`):
+Four flat sections. Immediately after `revive init`, the file has
+`PURPOSE` filled (auto-detected — see the chain in Design notes) and
+three placeholder sections waiting for your edits:
 
 ```
-PURPOSE: <2-3 sentence summary — what + business goal + hard constraint>
+PURPOSE: <auto-detected from gh / manifest / CLAUDE.md / README>
 DIFFERENTIATORS:
-  - <alternative> → <our choice / rationale>
+  - (what sets this project apart; edit this file)
 INVARIANTS:
-  - <rule whose breakage causes non-obvious damage>
+  - (top-5 architectural rules; edit this file)
 GOTCHAS:
-  - <landmine whose fix isn't obvious from code alone>
+  - (landmines you keep stepping on; edit this file)
+```
+
+`PURPOSE` is **one physical line in the file** — no `\n` in the middle,
+even when it holds 2–3 sentences and wraps visually in your editor
+(up to 400 characters). The three other sections are bullet lists
+under a section header.
+
+After `revive suggest` + `revive audit` (or a hand edit), the file
+looks like:
+
+```
+PURPOSE: Background-job scheduler for small Go services. Success metric is zero surprise job failures after a deploy — goal: replace ops-managed cron with code-defined schedules that survive rollouts. Constraint: job state lives in the app's own Postgres; no new infrastructure.
+DIFFERENTIATORS:
+  - Traditional cron → schedules defined in code, survive deploys
+  - Managed SaaS schedulers → zero new infrastructure; reuses app Postgres
+  - Temporal / DAG workflow engines → single-step jobs only; keep it small
+INVARIANTS:
+  - Every schedule change ships with a migration; never edit rows in prod.
+  - Jobs must be idempotent — retries on deploy-overlap are expected.
+  - Worker binary must not grow past 30 MB (embedded-device deploy target).
+GOTCHAS:
+  - `make test` runs integration against a real Postgres — set TEST_DATABASE_URL.
+  - `bin/deploy` always runs `schedule:apply` last; reordering breaks overlap detection.
 ```
 
 The file is checked in. `revive show` assembles the brief around it on each
 refresh. Placeholder-only sections (still saying *"(edit this file)"*) are
-suppressed from the brief — no noise.
+suppressed from the emitted brief — no noise injected to the agent.
 
 ### How often the brief is injected
 
@@ -197,20 +223,28 @@ regenerate scaffolding.
 
 ### What goes in (evidence-backed non-inferable facts)
 
-- **PURPOSE** — curated 1-liner. Chain: `gh repo view --json description` →
-  manifest `description` (pyproject, package.json, Cargo, gemspec,
-  composer) → `CLAUDE.md` → filtered README. First hit wins.
+- **PURPOSE** — one physical line, ≤400 chars, typically 2–3 sentences
+  covering what the project is, its business goal, and the one hard
+  constraint that shapes design decisions. Auto-detected via a chain:
+  `gh repo view --json description` → manifest `description`
+  (pyproject, package.json, Cargo, gemspec, composer) → `CLAUDE.md`
+  first paragraph → filtered README prose. First hit wins.
 - **DIFFERENTIATORS, INVARIANTS, GOTCHAS** — human-curated (via `suggest` +
   `audit`, user-reviewed). Research: *"Human curation yields ~4%
   performance gains; auto-generation reduces success rates by 0.5–2%"*
   ([Augment Code, 2026][augment]).
-- **STATE** — `git` branch + last 3 commits, with body excerpt for
-  fix/feat/refactor commits (surfaces PR descriptions for squash-merge
-  workflows).
+- **STATE** — `git` branch + last 3 commits (subject only for
+  subject-only commits; subject plus the first paragraph of the
+  body, truncated to ~100 chars, for commits that carry a body).
+  Squash-merge bodies typically hold the PR description, so this
+  surfaces PR context for free without a `gh` API call.
 - **HOT_FILES** — top 5 files by commit-frequency over the last 20 commits,
   each annotated with the last commit subject.
-- **COMMANDS** — exact test/lint/build/dev invocations from `package.json`
-  / Rails `bin/*` / `Makefile` / `.revive/commands.md` override.
+- **COMMANDS** — exact test / lint / build / dev / setup
+  invocations. Source priority: `.revive/commands.md` override →
+  Rails `bin/*` (if `Gemfile` or `*.gemspec` present) →
+  `package.json` `scripts` → `Makefile` targets → Rails `bin/*`
+  fallback. Whole section is suppressed if no source matches.
 
 ### What we deliberately don't inject
 
