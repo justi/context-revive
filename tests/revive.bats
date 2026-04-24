@@ -306,6 +306,68 @@ EOF
   [[ "$output" == *"PHP thing from composer"* ]]
 }
 
+# Codex P2: wrapped CLAUDE.md paragraphs were truncated to the first line.
+@test "purpose chain: CLAUDE.md captures hard-wrapped paragraph across lines" {
+  cat > CLAUDE.md <<'EOF'
+# Project
+
+## What this project is
+
+This is a description that spans across
+multiple lines because the author wrapped at
+80 columns, and all three lines matter.
+
+## Something else
+EOF
+  run "$REVIVE" init
+  run cat .revive/static.md
+  [[ "$output" == *"spans across multiple lines"* ]]
+  [[ "$output" == *"all three lines matter"* ]]
+}
+
+# Codex P3: gemspec sed stripped interior apostrophes of double-quoted strings.
+@test "purpose chain: gemspec preserves apostrophes inside double-quoted summary" {
+  cat > example.gemspec <<'EOF'
+Gem::Specification.new do |s|
+  s.name    = "example"
+  s.summary = "It's a Ruby gem that's useful"
+end
+EOF
+  run "$REVIVE" init
+  run cat .revive/static.md
+  [[ "$output" == *"It's a Ruby gem that's useful"* ]]
+}
+
+@test "purpose chain: gemspec with single-quoted summary still works" {
+  cat > example.gemspec <<'EOF'
+Gem::Specification.new do |s|
+  s.name    = "example"
+  s.summary = 'Single-quoted summary here'
+end
+EOF
+  run "$REVIVE" init
+  run cat .revive/static.md
+  [[ "$output" == *"Single-quoted summary here"* ]]
+}
+
+# Codex P2: composer.json fallback path when jq unavailable or fails.
+@test "purpose chain: composer.json extraction works via grep fallback" {
+  printf '{"name":"acme/widget","description":"Composer grep-path description","require":{}}\n' > composer.json
+  # Shim jq to simulate unavailable/broken. command -v will still find it,
+  # so we also have the in-function behavior of treating empty jq output as
+  # "try grep fallback".
+  mkdir -p "$WORKDIR/shim"
+  cat > "$WORKDIR/shim/jq" <<'EOF'
+#!/usr/bin/env bash
+# always return empty to force the grep fallback
+exit 0
+EOF
+  chmod +x "$WORKDIR/shim/jq"
+  PATH="$WORKDIR/shim:$PATH" "$REVIVE" init
+  run cat .revive/static.md
+  [[ "$output" == *"Composer grep-path description"* ]]
+}
+
 @test "purpose chain: CLAUDE.md 'What this project is' wins over README" {
   cat > CLAUDE.md <<'EOF'
 # Project

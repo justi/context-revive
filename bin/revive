@@ -356,12 +356,15 @@ purpose_from_pyproject() {
 
 purpose_from_package_json() {
   [[ -f package.json ]] || return 1
+  local d=""
   if command -v jq >/dev/null 2>&1; then
-    jq -r '.description // empty' package.json 2>/dev/null
-  else
-    grep -E '^[[:space:]]*"description"[[:space:]]*:' package.json | head -1 \
-      | sed -E 's/.*"description"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/'
+    d=$(jq -r '.description // empty' package.json 2>/dev/null || true)
   fi
+  if [[ -z "$d" ]]; then
+    d=$(grep -E '"description"[[:space:]]*:' package.json | head -1 \
+        | sed -E 's/.*"description"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/')
+  fi
+  [[ -n "$d" ]] && printf '%s\n' "$d"
 }
 
 purpose_from_cargo() {
@@ -378,26 +381,46 @@ purpose_from_cargo() {
 }
 
 purpose_from_gemspec() {
-  local gs
+  local gs line
   gs=$(ls -- *.gemspec 2>/dev/null | head -1) || return 1
   [[ -n "$gs" ]] || return 1
-  grep -E '\.(summary|description)[[:space:]]*=' "$gs" | head -1 \
-    | sed -E "s/.*(summary|description)[[:space:]]*=[[:space:]]*//; s/^[\"']//; s/[\"'].*$//"
+  line=$(grep -E '\.(summary|description)[[:space:]]*=' "$gs" | head -1) || return 1
+  [[ -n "$line" ]] || return 1
+  # Determine the outer delimiter and capture its payload so interior
+  # apostrophes in double-quoted strings (and vice versa) survive intact.
+  if [[ "$line" == *\"* ]]; then
+    sed -E 's/^[^"]*"([^"]*)".*$/\1/' <<<"$line"
+  elif [[ "$line" == *\'* ]]; then
+    sed -E "s/^[^']*'([^']*)'.*\$/\1/" <<<"$line"
+  fi
 }
 
 purpose_from_composer() {
   [[ -f composer.json ]] || return 1
+  local d=""
   if command -v jq >/dev/null 2>&1; then
-    jq -r '.description // empty' composer.json 2>/dev/null
+    d=$(jq -r '.description // empty' composer.json 2>/dev/null || true)
   fi
+  if [[ -z "$d" ]]; then
+    d=$(grep -E '"description"[[:space:]]*:' composer.json | head -1 \
+        | sed -E 's/.*"description"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/')
+  fi
+  [[ -n "$d" ]] && printf '%s\n' "$d"
 }
 
 purpose_from_claudemd() {
   [[ -f CLAUDE.md ]] || return 1
+  # Accumulate the full first paragraph (hard-wrapped lines joined by a space)
+  # rather than truncating at the first non-empty line. Stops at a blank line
+  # or the next `##` heading.
   awk '
     /^##[[:space:]]+(What this project is|About)/ { cap=1; next }
     cap && /^##/ { exit }
-    cap && NF    { print; exit }
+    cap {
+      if (NF == 0) { if (para != "") exit; next }
+      para = (para == "" ? $0 : para " " $0)
+    }
+    END { if (para != "") print para }
   ' CLAUDE.md
 }
 
