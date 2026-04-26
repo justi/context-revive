@@ -87,6 +87,7 @@ revive init              # scaffold .revive/static.md; PURPOSE auto-detected, 3 
 revive suggest | pbcopy  # paste into active agent — agent rewrites PURPOSE/DIFFERENTIATORS/INVARIANTS/GOTCHAS
 revive audit   | pbcopy  # paste into a FRESH session — agent proposes bullets the first pass missed
 revive install-hook      # wire UserPromptSubmit hook into .claude/settings.json
+revive doctor            # sanity-check the install (git, static.md, hook, log)
 revive show              # preview the assembled brief (forced emit, ignores cadence)
 ```
 
@@ -212,6 +213,7 @@ preserves user-edited `DIFFERENTIATORS` / `INVARIANTS` / `GOTCHAS`.
 ```bash
 curl -fsSL https://raw.githubusercontent.com/justi/context-revive/main/install.sh | bash
 revive version
+revive doctor                    # sanity-check the install
 ```
 
 Re-writes `~/.local/bin/revive`. Per-project `.revive/static.md` files and
