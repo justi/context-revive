@@ -1302,7 +1302,7 @@ EOF
 
 @test "doctor fails when .revive/static.md is missing" {
   run "$REVIVE" doctor
-  [ "$status" -eq 1 ]
+  [ "$status" -eq 1 ] || return 1
   [[ "$output" == *"FAIL"* ]] || return 1
   [[ "$output" == *".revive/static.md missing"* ]] || return 1
 }
@@ -1310,7 +1310,7 @@ EOF
 @test "doctor passes (with PURPOSE warn) right after init" {
   "$REVIVE" init
   run "$REVIVE" doctor
-  [ "$status" -eq 0 ]
+  [ "$status" -eq 0 ] || return 1
   [[ "$output" == *"PURPOSE is still placeholder"* ]] || return 1
 }
 
@@ -1321,7 +1321,7 @@ EOF
     .revive/static.md > .revive/static.md.new
   mv .revive/static.md.new .revive/static.md
   run "$REVIVE" doctor
-  [ "$status" -eq 0 ]
+  [ "$status" -eq 0 ] || return 1
   [[ "$output" == *"PURPOSE is filled in"* ]] || return 1
 }
 
@@ -1335,7 +1335,7 @@ EOF
   "$REVIVE" init
   "$REVIVE" install-hook
   run "$REVIVE" doctor
-  [ "$status" -eq 0 ]
+  [ "$status" -eq 0 ] || return 1
   [[ "$output" == *"hook installed in .claude/settings.json"* ]] || return 1
   [[ "$output" != *"no UserPromptSubmit hook found"* ]] || return 1
 }
