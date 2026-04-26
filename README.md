@@ -277,8 +277,8 @@ works on any dev machine without installing a language toolchain.
 
 ## Status
 
-Pre-alpha. Weekend MVP in active dogfooding. **v0.1.18** — README rewrite
-(action-first), CI on every PR (shellcheck + 111 bats tests); see
+Pre-alpha. Weekend MVP in active dogfooding. **v0.1.19** — `revive doctor`
+sanity-check command; the repo now dogfoods its own static.md; see
 [Releases](https://github.com/justi/context-revive/releases) for history.
 
 ## License
