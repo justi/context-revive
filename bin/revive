@@ -36,6 +36,8 @@ Commands:
   refresh           Hook entry point — cadence-gated, silent on failure
   install-hook      Wire UserPromptSubmit into .claude/settings.json
                     (use --global for ~/.claude/settings.json)
+  doctor            Run sanity checks (git, .revive/static.md, hook,
+                    log file). Exits non-zero if anything is broken.
   version           Print version
 EOF
 }
@@ -1098,6 +1100,98 @@ EOF
   echo "installed hook in $settings_path"
 }
 
+# --- doctor -----------------------------------------------------------------
+
+# Sanity-check the local install. Exits 1 if any FAIL check trips
+# (something that breaks revive: no git, not a repo, no static.md).
+# WARN-only checks (placeholder PURPOSE, missing hook, oversized log)
+# don't fail the command — they're hints, not blockers.
+cmd_doctor() {
+  local fail=0 warn=0
+  _doctor_ok()   { printf 'OK    %s\n' "$1"; }
+  _doctor_warn() { printf 'WARN  %s\n' "$1"; warn=$((warn+1)); }
+  _doctor_fail() { printf 'FAIL  %s\n' "$1"; fail=$((fail+1)); }
+
+  # 1. git binary
+  if command -v git >/dev/null 2>&1; then
+    _doctor_ok "git available ($(git --version))"
+  else
+    _doctor_fail "git not found in PATH"
+  fi
+
+  # 2. inside a git repo (revive needs git history for STATE/HOT_FILES)
+  if git rev-parse --git-dir >/dev/null 2>&1; then
+    _doctor_ok "in a git repo (branch: $(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?'))"
+  else
+    _doctor_fail "not a git repo — revive needs git history for STATE/HOT_FILES"
+  fi
+
+  # 3. jq (only needed for install-hook; warn if absent)
+  if command -v jq >/dev/null 2>&1; then
+    _doctor_ok "jq available"
+  else
+    _doctor_warn "jq not found — install-hook will fall back to manual instructions"
+  fi
+
+  # 4. static.md exists; 5. PURPOSE is filled in
+  if [[ -f "$STATIC_FILE" ]]; then
+    _doctor_ok "$STATIC_FILE exists"
+    if grep -q '(describe this project in 1-3 sentences)' "$STATIC_FILE"; then
+      _doctor_warn "$STATIC_FILE PURPOSE is still placeholder — run \`revive suggest | pbcopy\`"
+    else
+      _doctor_ok "$STATIC_FILE PURPOSE is filled in"
+    fi
+  else
+    _doctor_fail "$STATIC_FILE missing — run \`revive init\` first"
+  fi
+
+  # 6. UserPromptSubmit hook installed somewhere (local or global settings).
+  # When jq is available, we structurally validate the hook lives under
+  # .hooks.UserPromptSubmit[].hooks[]. Without jq we fall back to grep —
+  # weaker, but `install-hook`'s manual-fallback path (printed when jq is
+  # missing) tells users to add a `"command": "... revive refresh"` entry,
+  # so the literal string is a reliable proxy.
+  local hook_found=0 f
+  for f in ".claude/settings.json" "$HOME/.claude/settings.json"; do
+    [[ -f "$f" ]] || continue
+    if command -v jq >/dev/null 2>&1; then
+      jq -e '[.hooks.UserPromptSubmit[]?.hooks[]? | select(.command | test("revive[[:space:]]+refresh"))] | length > 0' \
+         "$f" >/dev/null 2>&1 || continue
+    else
+      grep -qE '"command"[[:space:]]*:[[:space:]]*"[^"]*revive[[:space:]]+refresh' "$f" || continue
+    fi
+    _doctor_ok "UserPromptSubmit hook installed in $f"
+    hook_found=1
+  done
+  if [[ "$hook_found" == 0 ]]; then
+    _doctor_warn "no UserPromptSubmit hook found — run \`revive install-hook\` (or \`--global\`)"
+  fi
+
+  # 7. hook log: present + sane size
+  if [[ -f "$LOG_FILE" ]]; then
+    local size_kb
+    size_kb=$(du -k "$LOG_FILE" 2>/dev/null | awk '{print $1}')
+    if [[ -n "$size_kb" && "$size_kb" -gt 1024 ]]; then
+      _doctor_warn "$LOG_FILE is ${size_kb} KB (>1 MB) — consider rotating"
+    else
+      _doctor_ok "$LOG_FILE present (${size_kb:-0} KB)"
+    fi
+  else
+    _doctor_ok "$LOG_FILE not yet written (hook hasn't fired yet)"
+  fi
+
+  echo
+  if [[ "$fail" -gt 0 ]]; then
+    printf 'doctor: %d fail, %d warn\n' "$fail" "$warn"
+    exit 1
+  fi
+  if [[ "$warn" -gt 0 ]]; then
+    printf 'doctor: %d warn\n' "$warn"
+  else
+    echo 'doctor: all checks passed'
+  fi
+}
+
 # --- main -------------------------------------------------------------------
 
 main() {
@@ -1111,6 +1205,7 @@ main() {
     suggest)       cmd_suggest "$@" ;;
     audit)         cmd_audit "$@" ;;
     install-hook)  cmd_install_hook "$@" ;;
+    doctor)        cmd_doctor "$@" ;;
     version|--version|-v) cmd_version ;;
     help|--help|-h)       usage ;;
     *) echo "unknown command: $cmd" >&2; usage; exit 1 ;;
