@@ -1,9 +1,12 @@
 # Architecture Decision Records — private during early development
 adr/
 
-# Claude Code local config and revive runtime state
+# Claude Code local config and revive runtime state.
+# `.revive/static.md` is the curated STATIC layer — checked in by design.
+# Everything else under `.revive/` (counters, commands.md, etc.) stays local.
 .claude/
-.revive/
+.revive/*
+!.revive/static.md
 
 # Private development plan
 PLAN.md
