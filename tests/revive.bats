@@ -1297,3 +1297,50 @@ EOF
   [[ "$output" == *"theme"* ]]
   [[ "$output" == *"UserPromptSubmit"* ]]
 }
+
+# --- doctor ---
+
+@test "doctor fails when .revive/static.md is missing" {
+  run "$REVIVE" doctor
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"FAIL"* ]] || return 1
+  [[ "$output" == *".revive/static.md missing"* ]] || return 1
+}
+
+@test "doctor passes (with PURPOSE warn) right after init" {
+  "$REVIVE" init
+  run "$REVIVE" doctor
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"PURPOSE is still placeholder"* ]] || return 1
+}
+
+@test "doctor reports filled PURPOSE as OK once user edits static.md" {
+  "$REVIVE" init
+  # replace the placeholder line with a real one-liner
+  awk '/\(describe this project/{print "Real purpose for the project."; next}1' \
+    .revive/static.md > .revive/static.md.new
+  mv .revive/static.md.new .revive/static.md
+  run "$REVIVE" doctor
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"PURPOSE is filled in"* ]] || return 1
+}
+
+@test "doctor warns when no UserPromptSubmit hook is installed" {
+  "$REVIVE" init
+  run "$REVIVE" doctor
+  [[ "$output" == *"no UserPromptSubmit hook found"* ]] || return 1
+}
+
+@test "doctor detects hook in local .claude/settings.json" {
+  "$REVIVE" init
+  "$REVIVE" install-hook
+  run "$REVIVE" doctor
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"hook installed in .claude/settings.json"* ]] || return 1
+  [[ "$output" != *"no UserPromptSubmit hook found"* ]] || return 1
+}
+
+@test "doctor appears in usage help" {
+  run "$REVIVE" help
+  [[ "$output" == *"doctor"* ]] || return 1
+}
