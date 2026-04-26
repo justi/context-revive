@@ -1,6 +1,8 @@
 #!/usr/bin/env bats
 # Run with: bats tests/
 
+bats_require_minimum_version 1.5.0
+
 setup() {
   REVIVE="${BATS_TEST_DIRNAME}/../bin/revive"
   WORKDIR="${BATS_TEST_DIRNAME}/../.tmp-test-$$-${BATS_TEST_NUMBER}"
@@ -892,14 +894,14 @@ EOF
 }
 
 @test "suggest prints core prompt sections on stdout" {
-  run "$REVIVE" suggest
+  run --separate-stderr "$REVIVE" suggest
   [ "$status" -eq 0 ]
-  [[ "$output" == *"INVARIANTS"* ]]
-  [[ "$output" == *"GOTCHAS"* ]]
-  [[ "$output" == *"non-inferable"* ]]
+  [[ "$output" == *"INVARIANTS"* ]] || return 1
+  [[ "$output" == *"GOTCHAS"* ]] || return 1
+  [[ "$output" == *"non-inferable"* ]] || return 1
   # meta-comments must go to stderr, not stdout — so `| pbcopy` stays clean
-  [[ "$output" != *"Paste this prompt"* ]]
-  [[ "$output" != *"BEGIN PROMPT"* ]]
+  [[ "$output" != *"Paste this prompt"* ]] || return 1
+  [[ "$output" != *"BEGIN PROMPT"* ]] || return 1
 }
 
 @test "suggest prompt instructs agent to edit .revive/static.md end-to-end" {
