@@ -275,8 +275,8 @@ works on any dev machine without installing a language toolchain.
 
 ## Status
 
-Pre-alpha. Weekend MVP in active dogfooding. **v0.1.17** — `revive audit`
-as separate fresh-session LLM call; 111 bats tests pass; see
+Pre-alpha. Weekend MVP in active dogfooding. **v0.1.18** — README rewrite
+(action-first), CI on every PR (shellcheck + 111 bats tests); see
 [Releases](https://github.com/justi/context-revive/releases) for history.
 
 ## License
