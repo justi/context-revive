@@ -499,7 +499,7 @@ purpose_from_cargo() {
 
 purpose_from_gemspec() {
   local gs line
-  gs=$(ls -- *.gemspec 2>/dev/null | head -1) || return 1
+  gs=$(find . -maxdepth 1 -name '*.gemspec' -print -quit 2>/dev/null)
   [[ -n "$gs" ]] || return 1
   line=$(grep -E '\.(summary|description)[[:space:]]*=' "$gs" | head -1) || return 1
   [[ -n "$line" ]] || return 1
