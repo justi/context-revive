@@ -1591,7 +1591,8 @@ JSON
 }
 
 @test "refresh log message reflects compact source" {
-  printf 'compact\n' > .claude/revive-compact.signal 2>/dev/null || mkdir -p .claude && printf 'compact\n' > .claude/revive-compact.signal
+  mkdir -p .claude
+  printf 'compact\n' > .claude/revive-compact.signal
   "$REVIVE" refresh >/dev/null
   run cat "$HOME/.context-revive/hook.log"
   [[ "$output" == *"post-compact: forcing emit"* ]] || return 1
