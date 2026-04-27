@@ -86,7 +86,7 @@ cd your-project
 revive init              # scaffold .revive/static.md; PURPOSE auto-detected, 3 sections left as placeholders
 revive suggest | pbcopy  # paste into active agent — agent rewrites PURPOSE/DIFFERENTIATORS/INVARIANTS/GOTCHAS
 revive audit   | pbcopy  # paste into a FRESH session — agent proposes bullets the first pass missed
-revive install-hook      # wire UserPromptSubmit + PostCompact hooks into .claude/settings.json
+revive install-hook      # wire UserPromptSubmit + PostCompact + SessionStart(clear) into .claude/settings.json
 revive doctor            # sanity-check the install (git, static.md, hook, log)
 revive show              # preview the assembled brief (forced emit, ignores cadence)
 ```
@@ -171,6 +171,9 @@ Emits when ANY of these is true:
    drops `.claude/revive-compact.signal` and the next refresh consumes it,
    bypassing cadence — that's the moment the agent has lost the most
    context, so re-injecting the brief gives the highest ROI.
+5. **Right after `/clear`**. `SessionStart` with `matcher: "clear"` drops
+   the same signal — `/clear` wipes more than `/compact`, same recovery
+   path applies.
 
 Prompts between emits see nothing from revive — silent skip, zero cost.
 Tune in your shell:
