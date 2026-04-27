@@ -284,8 +284,9 @@ works on any dev machine without installing a language toolchain.
 
 ## Status
 
-Pre-alpha. Weekend MVP in active dogfooding. **v0.1.19** — `revive doctor`
-sanity-check command; the repo now dogfoods its own static.md; see
+Pre-alpha. Weekend MVP in active dogfooding. **v0.2.0** — context-loss
+recovery: refresh fires after `/compact` and `/clear`; `revive init`
+auto-fixes `.gitignore`; sharper tagline; see
 [Releases](https://github.com/justi/context-revive/releases) for history.
 
 ## License
