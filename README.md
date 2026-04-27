@@ -1,6 +1,6 @@
 # context-revive
 
-> Your side project died at 80%. Bring it back in one prompt.
+> Your agent forgot the ADR you wrote 30 prompts ago.
 
 **Re-inject a dense, deterministic project brief into Claude Code every few
 prompts, before context rot degrades the agent.** You edit `.revive/static.md`
