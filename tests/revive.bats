@@ -1336,8 +1336,23 @@ EOF
   "$REVIVE" install-hook
   run "$REVIVE" doctor
   [ "$status" -eq 0 ] || return 1
-  [[ "$output" == *"hook installed in .claude/settings.json"* ]] || return 1
+  [[ "$output" == *"UserPromptSubmit hook installed in .claude/settings.json"* ]] || return 1
+  [[ "$output" == *"PostCompact hook installed in .claude/settings.json"* ]] || return 1
   [[ "$output" != *"no UserPromptSubmit hook found"* ]] || return 1
+  [[ "$output" != *"no PostCompact hook found"* ]] || return 1
+}
+
+@test "doctor warns when only UserPromptSubmit is wired (upgrade gap)" {
+  # Simulates an upgraded install: settings.json has the legacy
+  # UserPromptSubmit entry but PostCompact has not been added yet.
+  "$REVIVE" init
+  mkdir -p .claude
+  cat > .claude/settings.json <<'JSON'
+{ "hooks": { "UserPromptSubmit": [ { "hooks": [ { "type": "command", "command": "revive refresh" } ] } ] } }
+JSON
+  run "$REVIVE" doctor
+  [[ "$output" == *"UserPromptSubmit hook installed"* ]] || return 1
+  [[ "$output" == *"no PostCompact hook found"* ]] || return 1
 }
 
 @test "doctor appears in usage help" {

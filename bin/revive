@@ -1171,33 +1171,34 @@ cmd_doctor() {
     _doctor_fail "$STATIC_FILE missing — run \`revive init\` first"
   fi
 
-  # 6. UserPromptSubmit hook installed somewhere (local or global settings).
-  # When jq is available, we structurally validate the hook lives under
-  # .hooks.UserPromptSubmit[].hooks[]. Without jq we fall back to grep —
-  # weaker, but `install-hook`'s manual-fallback path (printed when jq is
-  # missing) tells users to add a `"command": "... revive refresh"` entry,
-  # so the literal string is a reliable proxy.
-  local hook_found=0 f
-  for f in ".claude/settings.json" "$HOME/.claude/settings.json"; do
-    [[ -f "$f" ]] || continue
-    # Try jq first (structural). If jq is absent OR the structural query
-    # errors out (e.g., broken jq, malformed JSON), fall back to grep so a
-    # manually-installed hook still gets detected.
-    if command -v jq >/dev/null 2>&1 && \
-       jq -e '[.hooks.UserPromptSubmit[]?.hooks[]? | select(.command | test("revive[[:space:]]+refresh"))] | length > 0' \
-          "$f" >/dev/null 2>&1; then
-      :
-    elif grep -qE '"command"[[:space:]]*:[[:space:]]*"[^"]*revive[[:space:]]+refresh' "$f"; then
-      :
-    else
-      continue
+  # 6. Both hooks installed somewhere (local or global settings).
+  # When jq is available we structurally validate; without jq we fall back
+  # to grep on the literal `"command": "... <pattern>"` string — weaker,
+  # but `install-hook`'s manual-fallback path produces exactly that shape.
+  _doctor_check_hook() {
+    local event="$1" pattern="$2"
+    local found=0 f
+    for f in ".claude/settings.json" "$HOME/.claude/settings.json"; do
+      [[ -f "$f" ]] || continue
+      if command -v jq >/dev/null 2>&1 && \
+         jq -e --arg ev "$event" --arg pat "$pattern" \
+            '[.hooks[$ev][]?.hooks[]? | select(.command | test($pat))] | length > 0' \
+            "$f" >/dev/null 2>&1; then
+        :
+      elif grep -qE "\"command\"[[:space:]]*:[[:space:]]*\"[^\"]*${pattern}" "$f"; then
+        :
+      else
+        continue
+      fi
+      _doctor_ok "$event hook installed in $f"
+      found=1
+    done
+    if [[ "$found" == 0 ]]; then
+      _doctor_warn "no $event hook found — run \`revive install-hook\` (or \`--global\`)"
     fi
-    _doctor_ok "UserPromptSubmit hook installed in $f"
-    hook_found=1
-  done
-  if [[ "$hook_found" == 0 ]]; then
-    _doctor_warn "no UserPromptSubmit hook found — run \`revive install-hook\` (or \`--global\`)"
-  fi
+  }
+  _doctor_check_hook "UserPromptSubmit" "revive[[:space:]]+refresh"
+  _doctor_check_hook "PostCompact"      "revive[[:space:]]+mark-compact"
 
   # 7. hook log: present + sane size
   if [[ -f "$LOG_FILE" ]]; then
