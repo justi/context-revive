@@ -1583,8 +1583,11 @@ JSON
   run cat "$HOME/.context-revive/hook.log"
   [[ "$output" == *"signal written"* ]] || return 1
   # Format: [timestamp] [cwd] message — must have TWO bracketed fields
-  # before the message body.
-  [[ "$output" =~ \[[^]]+\]\ \[[^]]+\]\ post-compact ]] || return 1
+  # before the message body. Regex held in a variable to avoid the bash
+  # =~ backslash-quoting differences between macOS bash 3.2 and CI's
+  # bash 5.x (literal \[ inside the inline pattern is unportable).
+  local re='\[[^]]+\] \[[^]]+\] post-compact'
+  [[ "$output" =~ $re ]] || return 1
 }
 
 @test "refresh log message reflects compact source" {
