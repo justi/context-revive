@@ -1430,3 +1430,69 @@ JSON
   run "$REVIVE" help
   [[ "$output" == *"mark-compact"* ]] || return 1
 }
+
+# --- init: gitignore auto-update ---
+
+@test "init does nothing to .gitignore when there is none" {
+  run "$REVIVE" init
+  [ "$status" -eq 0 ] || return 1
+  [ ! -f .gitignore ] || return 1
+}
+
+@test "init appends exception when .revive/* is gitignored without exception" {
+  printf '.revive/*\n' > .gitignore
+  run "$REVIVE" init
+  [ "$status" -eq 0 ] || return 1
+  [[ "$output" == *"un-ignored"* ]] || return 1
+  run cat .gitignore
+  [[ "$output" == *"!.revive/static.md"* ]] || return 1
+  # static.md is now actually trackable
+  run git check-ignore -q .revive/static.md
+  [ "$status" -ne 0 ] || return 1
+}
+
+@test "init leaves .gitignore alone when static.md is already trackable" {
+  printf '.revive/*\n!.revive/static.md\n' > .gitignore
+  local before
+  before=$(wc -l < .gitignore)
+  run "$REVIVE" init
+  [ "$status" -eq 0 ] || return 1
+  local after
+  after=$(wc -l < .gitignore)
+  [ "$before" -eq "$after" ] || return 1
+}
+
+@test "init un-ignores static.md even with a directory-level .revive/ rule" {
+  # Codex P2 regression check: a `.revive/` rule used to leave static.md
+  # untrackable. The canonical block now leads with `!.revive/` so the
+  # un-ignore works regardless.
+  printf '.revive/\n' > .gitignore
+  run "$REVIVE" init
+  [ "$status" -eq 0 ] || return 1
+  [[ "$output" == *"un-ignored"* ]] || return 1
+  run git check-ignore -q .revive/static.md
+  [ "$status" -ne 0 ] || return 1
+}
+
+@test "init un-ignores static.md against a broad dot-dir rule (.*)" {
+  # Common case: repos that ignore all dot-directories with `.*`. Without
+  # the leading `!.revive/`, the file-level exception cannot rescue
+  # static.md from the broader directory ignore.
+  printf '.*\n' > .gitignore
+  run "$REVIVE" init
+  [ "$status" -eq 0 ] || return 1
+  run git check-ignore -q .revive/static.md
+  [ "$status" -ne 0 ] || return 1
+}
+
+@test "init does not abort when .gitignore is read-only" {
+  # Codex P3: `cat >> .gitignore` under `set -e` would terminate cmd_init
+  # if the file is read-only. Best-effort path must warn and continue.
+  printf '.revive/*\n' > .gitignore
+  chmod -w .gitignore
+  trap 'chmod +w .gitignore || true' RETURN
+  run "$REVIVE" init
+  [ "$status" -eq 0 ] || return 1
+  [[ "$output" == *"not writable"* ]] || return 1
+  [ -f .revive/static.md ] || return 1
+}

@@ -697,6 +697,57 @@ cmd_init() {
   else
     echo "created: $STATIC_FILE"
   fi
+
+  maybe_update_gitignore
+}
+
+# If $STATIC_FILE would currently be gitignored, append the canonical
+# exception block to .gitignore so the file can actually be tracked. Stays
+# silent when not in a git repo, when there's no .gitignore yet, or when
+# static.md is already trackable. If a directory-level `.revive/` rule
+# blocks the un-ignore from taking effect, surface a clear warning instead
+# of silently leaving the file untracked.
+maybe_update_gitignore() {
+  git rev-parse --git-dir >/dev/null 2>&1 || return 0
+  [[ -f .gitignore ]] || return 0
+  git check-ignore -q "$STATIC_FILE" 2>/dev/null || return 0
+
+  # Best-effort: a read-only .gitignore must not abort `init`. Surface a
+  # warning with the exact lines the user needs to add, and continue.
+  if [[ ! -w .gitignore ]]; then
+    cat >&2 <<MSG
+warning: .gitignore is not writable — skipping auto-update. Add manually:
+  !.revive/
+  .revive/*
+  !.revive/static.md
+or run \`git add -f $STATIC_FILE\`.
+MSG
+    return 0
+  fi
+
+  # The block has to un-ignore the parent directory first: git semantics
+  # don't let \`!\` rescue a file inside a fully-ignored directory. Putting
+  # \`!.revive/\` first covers \`.revive/\`, \`.revive\`, and broad rules like
+  # \`.*\` / \`.*/\`. Then we re-ignore the directory contents and re-include
+  # only static.md.
+  cat >> .gitignore <<'GITIGNORE'
+
+# revive: .revive/static.md is the curated STATIC layer (checked in);
+# other .revive/ contents are local runtime state.
+!.revive/
+.revive/*
+!.revive/static.md
+GITIGNORE
+
+  if git check-ignore -q "$STATIC_FILE" 2>/dev/null; then
+    cat >&2 <<MSG
+warning: $STATIC_FILE is still gitignored after appending the canonical
+exception block. Inspect with \`git check-ignore -v $STATIC_FILE\` to see
+which rule is overriding, or run \`git add -f $STATIC_FILE\`.
+MSG
+  else
+    echo "updated: .gitignore (un-ignored $STATIC_FILE)"
+  fi
 }
 
 # Build a prompt that a coding agent (Claude Code / Cursor / Aider / any
