@@ -1496,3 +1496,77 @@ JSON
   [[ "$output" == *"not writable"* ]] || return 1
   [ -f .revive/static.md ] || return 1
 }
+
+# --- /clear trigger ---
+
+@test "mark-clear writes signal file in .claude/" {
+  mkdir -p .claude
+  run "$REVIVE" mark-clear
+  [ "$status" -eq 0 ] || return 1
+  [ -f .claude/revive-compact.signal ] || return 1
+}
+
+@test "mark-clear appears in usage help" {
+  run "$REVIVE" help
+  [[ "$output" == *"mark-clear"* ]] || return 1
+}
+
+@test "install-hook adds SessionStart entry with matcher=clear" {
+  "$REVIVE" install-hook
+  run cat .claude/settings.json
+  [[ "$output" == *"SessionStart"* ]] || return 1
+  [[ "$output" == *"\"matcher\":"*"\"clear\""* ]] || return 1
+  [[ "$output" == *"revive mark-clear"* ]] || return 1
+}
+
+@test "install-hook is idempotent across all three hooks" {
+  "$REVIVE" install-hook
+  "$REVIVE" install-hook
+  local rc cc xc
+  rc=$(grep -c 'revive refresh' .claude/settings.json)
+  cc=$(grep -c 'revive mark-compact' .claude/settings.json)
+  xc=$(grep -c 'revive mark-clear' .claude/settings.json)
+  [ "$rc" -eq 1 ] || return 1
+  [ "$cc" -eq 1 ] || return 1
+  [ "$xc" -eq 1 ] || return 1
+}
+
+@test "doctor warns when SessionStart hook is missing" {
+  "$REVIVE" init
+  mkdir -p .claude
+  cat > .claude/settings.json <<'JSON'
+{ "hooks": {
+    "UserPromptSubmit": [ { "hooks": [ { "type": "command", "command": "revive refresh" } ] } ],
+    "PostCompact":      [ { "hooks": [ { "type": "command", "command": "revive mark-compact" } ] } ]
+} }
+JSON
+  run "$REVIVE" doctor
+  [[ "$output" == *"no SessionStart(clear) hook found"* ]] || return 1
+}
+
+@test "doctor warns when SessionStart entry has wrong matcher (codex P3)" {
+  # mark-clear is wired, but matcher is "startup" instead of "clear" —
+  # /clear will never trigger this hook. doctor must surface the gap
+  # rather than silently passing on command match alone.
+  "$REVIVE" init
+  mkdir -p .claude
+  cat > .claude/settings.json <<'JSON'
+{ "hooks": {
+    "UserPromptSubmit": [ { "hooks": [ { "type": "command", "command": "revive refresh" } ] } ],
+    "PostCompact":      [ { "hooks": [ { "type": "command", "command": "revive mark-compact" } ] } ],
+    "SessionStart":     [ { "matcher": "startup", "hooks": [ { "type": "command", "command": "revive mark-clear" } ] } ]
+} }
+JSON
+  run "$REVIVE" doctor
+  [[ "$output" == *"no SessionStart(clear) hook found"* ]] || return 1
+}
+
+@test "doctor recognises all three hooks after a fresh install-hook" {
+  "$REVIVE" init
+  "$REVIVE" install-hook
+  run "$REVIVE" doctor
+  [ "$status" -eq 0 ] || return 1
+  [[ "$output" == *"UserPromptSubmit hook installed"* ]] || return 1
+  [[ "$output" == *"PostCompact hook installed"* ]] || return 1
+  [[ "$output" == *"SessionStart(clear) hook installed"* ]] || return 1
+}

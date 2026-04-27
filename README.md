@@ -86,7 +86,7 @@ cd your-project
 revive init              # scaffold .revive/static.md; PURPOSE auto-detected, 3 sections left as placeholders
 revive suggest | pbcopy  # paste into active agent — agent rewrites PURPOSE/DIFFERENTIATORS/INVARIANTS/GOTCHAS
 revive audit   | pbcopy  # paste into a FRESH session — agent proposes bullets the first pass missed
-revive install-hook      # wire UserPromptSubmit hook into .claude/settings.json
+revive install-hook      # wire UserPromptSubmit + PostCompact + SessionStart(clear) into .claude/settings.json
 revive doctor            # sanity-check the install (git, static.md, hook, log)
 revive show              # preview the assembled brief (forced emit, ignores cadence)
 ```
@@ -167,6 +167,13 @@ Emits when ANY of these is true:
 2. **Every 5th prompt after that**, via `REVIVE_REFRESH_EVERY` (default `5`).
 3. **Gap of >10 minutes** since the last emit, via `REVIVE_REFRESH_TIME_GAP`
    (default `600` seconds).
+4. **Right after `/compact`** (or AutoCompact). The `PostCompact` hook
+   drops `.claude/revive-compact.signal` and the next refresh consumes it,
+   bypassing cadence — that's the moment the agent has lost the most
+   context, so re-injecting the brief gives the highest ROI.
+5. **Right after `/clear`**. `SessionStart` with `matcher: "clear"` drops
+   the same signal — `/clear` wipes more than `/compact`, same recovery
+   path applies.
 
 Prompts between emits see nothing from revive — silent skip, zero cost.
 Tune in your shell:
@@ -277,8 +284,9 @@ works on any dev machine without installing a language toolchain.
 
 ## Status
 
-Pre-alpha. Weekend MVP in active dogfooding. **v0.1.19** — `revive doctor`
-sanity-check command; the repo now dogfoods its own static.md; see
+Pre-alpha. Weekend MVP in active dogfooding. **v0.2.0** — context-loss
+recovery: refresh fires after `/compact` and `/clear`; `revive init`
+auto-fixes `.gitignore`; sharper tagline; see
 [Releases](https://github.com/justi/context-revive/releases) for history.
 
 ## License

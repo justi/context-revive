@@ -3,7 +3,7 @@
 # https://github.com/justi/context-revive
 set -euo pipefail
 
-VERSION="0.1.19"
+VERSION="0.2.0"
 STATIC_FILE=".revive/static.md"
 COMMANDS_FILE=".revive/commands.md"
 BRIEF_CHAR_BUDGET=2200
@@ -37,8 +37,10 @@ Commands:
   refresh           Hook entry point — cadence-gated, silent on failure
   mark-compact      PostCompact hook entry — drops a signal so the next
                     refresh bypasses cadence and emits immediately
-  install-hook      Wire UserPromptSubmit + PostCompact into
-                    .claude/settings.json (use --global for ~/.claude/)
+  mark-clear        SessionStart(matcher=clear) hook entry — same signal
+                    semantics as mark-compact, fires after `/clear`
+  install-hook      Wire UserPromptSubmit + PostCompact + SessionStart(clear)
+                    into .claude/settings.json (use --global for ~/.claude/)
   doctor            Run sanity checks (git, .revive/static.md, hook,
                     log file). Exits non-zero if anything is broken.
   version           Print version
@@ -437,13 +439,22 @@ cmd_show() {
   printf '\n--- %d chars (budget: %d) ---\n' "$len" "$BRIEF_CHAR_BUDGET" >&2
 }
 
-# PostCompact hook entry point: drop a signal file so the next refresh
-# bypasses cadence and emits immediately. Always exits 0 — like cmd_refresh,
-# this is on the hook hot path and must never break a Claude Code session.
+# PostCompact / SessionStart(clear) hook entry points. Both drop the same
+# signal file so the next refresh bypasses cadence and emits immediately.
+# Two commands so the hook entries in settings.json read naturally and
+# logs distinguish the source. Always exit 0 — these are on the hook hot
+# path and must never break a Claude Code session.
 cmd_mark_compact() {
   mkdir -p "$(dirname "$COMPACT_SIGNAL")" 2>/dev/null || return 0
   date +%s > "$COMPACT_SIGNAL" 2>/dev/null || return 0
   log "post-compact signal written: $COMPACT_SIGNAL"
+  return 0
+}
+
+cmd_mark_clear() {
+  mkdir -p "$(dirname "$COMPACT_SIGNAL")" 2>/dev/null || return 0
+  date +%s > "$COMPACT_SIGNAL" 2>/dev/null || return 0
+  log "post-clear signal written: $COMPACT_SIGNAL"
   return 0
 }
 
@@ -1132,6 +1143,7 @@ cmd_install_hook() {
   revive_bin=$(command -v revive 2>/dev/null || echo "$HOME/.local/bin/revive")
   local refresh_cmd="$revive_bin refresh"
   local compact_cmd="$revive_bin mark-compact"
+  local clear_cmd="$revive_bin mark-clear"
 
   mkdir -p "$(dirname "$settings_path")"
   [[ -f "$settings_path" ]] || echo '{}' > "$settings_path"
@@ -1147,6 +1159,9 @@ jq not found. Merge this into $settings_path manually:
     ],
     "PostCompact": [
       { "hooks": [ { "type": "command", "command": "$compact_cmd" } ] }
+    ],
+    "SessionStart": [
+      { "matcher": "clear", "hooks": [ { "type": "command", "command": "$clear_cmd" } ] }
     ]
   }
 }
@@ -1154,27 +1169,39 @@ EOF
     exit 1
   fi
 
+  # Idempotency key: (event, matcher, command). Different matchers for the
+  # same event are distinct entries — e.g. SessionStart{clear} alongside a
+  # user-added SessionStart{startup} must not collapse into one.
   upsert() {
-    local event="$1" cmd="$2"
-    if jq -e --arg cmd "$cmd" --arg ev "$event" \
-         '[.hooks[$ev][]?.hooks[]? | select(.command == $cmd)] | length > 0' \
+    local event="$1" cmd="$2" matcher="${3:-}"
+    if jq -e --arg cmd "$cmd" --arg ev "$event" --arg m "$matcher" \
+         '[.hooks[$ev][]? | select(((.matcher // "") == $m) and (.hooks[]?.command == $cmd))] | length > 0' \
          "$settings_path" >/dev/null 2>&1; then
-      echo "$event hook already installed in $settings_path"
+      echo "$event${matcher:+($matcher)} hook already installed in $settings_path"
       return 0
     fi
     local tmp
     tmp=$(mktemp)
-    jq --arg cmd "$cmd" --arg ev "$event" '
-      .hooks = (.hooks // {})
-      | .hooks[$ev] = (.hooks[$ev] // [])
-      | .hooks[$ev] += [{"hooks":[{"type":"command","command":$cmd}]}]
-    ' "$settings_path" > "$tmp"
+    if [[ -n "$matcher" ]]; then
+      jq --arg cmd "$cmd" --arg ev "$event" --arg m "$matcher" '
+        .hooks = (.hooks // {})
+        | .hooks[$ev] = (.hooks[$ev] // [])
+        | .hooks[$ev] += [{"matcher":$m,"hooks":[{"type":"command","command":$cmd}]}]
+      ' "$settings_path" > "$tmp"
+    else
+      jq --arg cmd "$cmd" --arg ev "$event" '
+        .hooks = (.hooks // {})
+        | .hooks[$ev] = (.hooks[$ev] // [])
+        | .hooks[$ev] += [{"hooks":[{"type":"command","command":$cmd}]}]
+      ' "$settings_path" > "$tmp"
+    fi
     mv "$tmp" "$settings_path"
-    echo "installed $event hook in $settings_path"
+    echo "installed $event${matcher:+($matcher)} hook in $settings_path"
   }
 
   upsert "UserPromptSubmit" "$refresh_cmd"
   upsert "PostCompact"      "$compact_cmd"
+  upsert "SessionStart"     "$clear_cmd"     "clear"
 }
 
 # --- doctor -----------------------------------------------------------------
@@ -1226,30 +1253,54 @@ cmd_doctor() {
   # When jq is available we structurally validate; without jq we fall back
   # to grep on the literal `"command": "... <pattern>"` string — weaker,
   # but `install-hook`'s manual-fallback path produces exactly that shape.
+  # Optional 3rd arg: required `matcher` value (e.g. "clear" for
+  # SessionStart). When provided, the jq path verifies the hook entry
+  # carries that exact matcher — otherwise a SessionStart{startup} or
+  # {resume} entry pointing at mark-clear would falsely pass. The grep
+  # fallback can't structurally tie matcher to command (they sit on
+  # separate JSON lines), so it stays command-only — accepted limitation
+  # for jq-less environments.
+  # jq exit codes: 0 = match, 1 = legitimate no-match, ≥2 = jq error
+  # (broken binary, malformed JSON). The grep fallback is for jq-error
+  # paths only — a legitimate "1" must NOT be overridden by grep, or a
+  # SessionStart{startup}+mark-clear setup would falsely pass when we're
+  # asking specifically for matcher=clear.
   _doctor_check_hook() {
-    local event="$1" pattern="$2"
-    local found=0 f
+    local event="$1" pattern="$2" matcher="${3:-}"
+    local label="$event${matcher:+($matcher)}"
+    local found=0 f jq_rc
     for f in ".claude/settings.json" "$HOME/.claude/settings.json"; do
       [[ -f "$f" ]] || continue
-      if command -v jq >/dev/null 2>&1 && \
-         jq -e --arg ev "$event" --arg pat "$pattern" \
-            '[.hooks[$ev][]?.hooks[]? | select(.command | test($pat))] | length > 0' \
-            "$f" >/dev/null 2>&1; then
-        :
-      elif grep -qE "\"command\"[[:space:]]*:[[:space:]]*\"[^\"]*${pattern}" "$f"; then
-        :
+      if command -v jq >/dev/null 2>&1; then
+        # `if jq ...; then` keeps `set -e` from aborting on a non-zero
+        # exit — we need to preserve the code (1 vs ≥2) to distinguish
+        # "no match" from "jq broke".
+        if jq -e --arg ev "$event" --arg pat "$pattern" --arg m "$matcher" \
+              '[.hooks[$ev][]? | select(((.matcher // "") == $m) and ((.hooks // []) | any(.command | test($pat))))] | length > 0' \
+              "$f" >/dev/null 2>&1
+        then jq_rc=0
+        else jq_rc=$?
+        fi
       else
-        continue
+        jq_rc=2
       fi
-      _doctor_ok "$event hook installed in $f"
+      case "$jq_rc" in
+        0) ;;                           # match
+        1) continue ;;                  # jq says no — trust it
+        *)                              # jq broke / absent: grep fallback
+          grep -qE "\"command\"[[:space:]]*:[[:space:]]*\"[^\"]*${pattern}" "$f" || continue
+          ;;
+      esac
+      _doctor_ok "$label hook installed in $f"
       found=1
     done
     if [[ "$found" == 0 ]]; then
-      _doctor_warn "no $event hook found — run \`revive install-hook\` (or \`--global\`)"
+      _doctor_warn "no $label hook found — run \`revive install-hook\` (or \`--global\`)"
     fi
   }
   _doctor_check_hook "UserPromptSubmit" "revive[[:space:]]+refresh"
   _doctor_check_hook "PostCompact"      "revive[[:space:]]+mark-compact"
+  _doctor_check_hook "SessionStart"     "revive[[:space:]]+mark-clear"     "clear"
 
   # 7. hook log: present + sane size
   if [[ -f "$LOG_FILE" ]]; then
@@ -1287,6 +1338,7 @@ main() {
     show)          cmd_show "$@" ;;
     refresh)       cmd_refresh "$@" ;;
     mark-compact)  cmd_mark_compact "$@" ;;
+    mark-clear)    cmd_mark_clear "$@" ;;
     suggest)       cmd_suggest "$@" ;;
     audit)         cmd_audit "$@" ;;
     install-hook)  cmd_install_hook "$@" ;;
