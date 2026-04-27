@@ -1430,3 +1430,42 @@ JSON
   run "$REVIVE" help
   [[ "$output" == *"mark-compact"* ]] || return 1
 }
+
+# --- init: gitignore auto-update ---
+
+@test "init does nothing to .gitignore when there is none" {
+  run "$REVIVE" init
+  [ "$status" -eq 0 ] || return 1
+  [ ! -f .gitignore ] || return 1
+}
+
+@test "init appends exception when .revive/* is gitignored without exception" {
+  printf '.revive/*\n' > .gitignore
+  run "$REVIVE" init
+  [ "$status" -eq 0 ] || return 1
+  [[ "$output" == *"un-ignored"* ]] || return 1
+  run cat .gitignore
+  [[ "$output" == *"!.revive/static.md"* ]] || return 1
+  # static.md is now actually trackable
+  run git check-ignore -q .revive/static.md
+  [ "$status" -ne 0 ] || return 1
+}
+
+@test "init leaves .gitignore alone when static.md is already trackable" {
+  printf '.revive/*\n!.revive/static.md\n' > .gitignore
+  local before
+  before=$(wc -l < .gitignore)
+  run "$REVIVE" init
+  [ "$status" -eq 0 ] || return 1
+  local after
+  after=$(wc -l < .gitignore)
+  [ "$before" -eq "$after" ] || return 1
+}
+
+@test "init warns when a directory-level .revive/ rule blocks the un-ignore" {
+  printf '.revive/\n' > .gitignore
+  run "$REVIVE" init
+  # init still exits 0 — warning is informational, not fatal
+  [ "$status" -eq 0 ] || return 1
+  [[ "$output" == *"still gitignored"* ]] || return 1
+}

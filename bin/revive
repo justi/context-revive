@@ -697,6 +697,39 @@ cmd_init() {
   else
     echo "created: $STATIC_FILE"
   fi
+
+  maybe_update_gitignore
+}
+
+# If $STATIC_FILE would currently be gitignored, append the canonical
+# exception block to .gitignore so the file can actually be tracked. Stays
+# silent when not in a git repo, when there's no .gitignore yet, or when
+# static.md is already trackable. If a directory-level `.revive/` rule
+# blocks the un-ignore from taking effect, surface a clear warning instead
+# of silently leaving the file untracked.
+maybe_update_gitignore() {
+  git rev-parse --git-dir >/dev/null 2>&1 || return 0
+  [[ -f .gitignore ]] || return 0
+  git check-ignore -q "$STATIC_FILE" 2>/dev/null || return 0
+
+  cat >> .gitignore <<'GITIGNORE'
+
+# revive: .revive/static.md is the curated STATIC layer (checked in);
+# other .revive/ contents are local runtime state.
+.revive/*
+!.revive/static.md
+GITIGNORE
+
+  if git check-ignore -q "$STATIC_FILE" 2>/dev/null; then
+    cat >&2 <<MSG
+warning: $STATIC_FILE is still gitignored after appending the canonical
+exception. A directory-level rule (\`.revive/\` or \`.revive\`) earlier in
+.gitignore is likely blocking the un-ignore — replace it with
+\`.revive/*\` + \`!.revive/static.md\`, or run \`git add -f $STATIC_FILE\`.
+MSG
+  else
+    echo "updated: .gitignore (un-ignored $STATIC_FILE)"
+  fi
 }
 
 # Build a prompt that a coding agent (Claude Code / Cursor / Aider / any
