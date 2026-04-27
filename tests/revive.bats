@@ -1570,3 +1570,45 @@ JSON
   [[ "$output" == *"PostCompact hook installed"* ]] || return 1
   [[ "$output" == *"SessionStart(clear) hook installed"* ]] || return 1
 }
+
+# --- log enrichments ---
+
+@test "log lines carry the cwd field for multi-project scanability" {
+  # mark-compact always logs (refresh on a fresh repo doesn't, since the
+  # counter-1 emit path doesn't go through log()). The mark-compact line
+  # must carry [<cwd>] so a global hook.log collected from many projects
+  # stays disambiguable.
+  mkdir -p .claude
+  "$REVIVE" mark-compact
+  run cat "$HOME/.context-revive/hook.log"
+  [[ "$output" == *"signal written"* ]] || return 1
+  # Format: [timestamp] [cwd] message — must have TWO bracketed fields
+  # before the message body.
+  [[ "$output" =~ \[[^]]+\]\ \[[^]]+\]\ post-compact ]] || return 1
+}
+
+@test "refresh log message reflects compact source" {
+  printf 'compact\n' > .claude/revive-compact.signal 2>/dev/null || mkdir -p .claude && printf 'compact\n' > .claude/revive-compact.signal
+  "$REVIVE" refresh >/dev/null
+  run cat "$HOME/.context-revive/hook.log"
+  [[ "$output" == *"post-compact: forcing emit"* ]] || return 1
+}
+
+@test "refresh log message reflects clear source" {
+  mkdir -p .claude
+  printf 'clear\n' > .claude/revive-compact.signal
+  "$REVIVE" refresh >/dev/null
+  run cat "$HOME/.context-revive/hook.log"
+  [[ "$output" == *"post-clear: forcing emit"* ]] || return 1
+  [[ "$output" != *"post-compact: forcing emit"* ]] || return 1
+}
+
+@test "refresh handles a malformed signal payload with neutral label" {
+  mkdir -p .claude
+  # Garbage content — must NOT mislabel as compact/clear, must NOT crash.
+  printf '\x00\x01garbage\n' > .claude/revive-compact.signal
+  run "$REVIVE" refresh
+  [ "$status" -eq 0 ] || return 1
+  run cat "$HOME/.context-revive/hook.log"
+  [[ "$output" == *"post-context-loss: forcing emit"* ]] || return 1
+}
