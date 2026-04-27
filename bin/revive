@@ -53,11 +53,17 @@ cmd_version() { echo "revive $VERSION"; }
 
 log() {
   mkdir -p "$LOG_DIR" 2>/dev/null || return 0
-  # Tilde-substitute $HOME so multi-project logs stay scannable. Without
-  # this each line carries a 60-char absolute path that drowns the message.
-  # Literal `~` in the replacement (bash does NOT tilde-expand inside the
-  # right-hand side of ${var/old/new}); a backslash there leaks through.
-  local cwd_short="${PWD/#$HOME/~}"
+  # Tilde-substitute $HOME so multi-project logs stay scannable. Match
+  # only on a path boundary — `${PWD/#$HOME/~}` would happily rewrite
+  # `/Users/alice-work/project` to `~-work/project` when HOME is
+  # `/Users/alice` (codex P2). Use case to require either exact match
+  # or `$HOME/` prefix.
+  local cwd_short
+  case "$PWD" in
+    "$HOME")    cwd_short="~" ;;
+    "$HOME"/*)  cwd_short="~${PWD#"$HOME"}" ;;
+    *)          cwd_short="$PWD" ;;
+  esac
   printf '[%s] [%s] %s\n' "$(date '+%Y-%m-%dT%H:%M:%S')" "$cwd_short" "$*" \
     >> "$LOG_FILE" 2>/dev/null || true
 }

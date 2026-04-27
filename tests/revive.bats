@@ -1615,3 +1615,18 @@ JSON
   run cat "$HOME/.context-revive/hook.log"
   [[ "$output" == *"post-context-loss: forcing emit"* ]] || return 1
 }
+
+@test "log cwd prefix-match respects path boundary (codex P2)" {
+  # When HOME is `/tmp/h` and PWD is `/tmp/h-other/project`, the lazy
+  # `${PWD/#$HOME/~}` would mis-emit `~-other/project` and the global
+  # log would attribute the message to the wrong project. The case-based
+  # rewrite must only fire on `$HOME` or `$HOME/...`.
+  mkdir -p "$WORKDIR-other/project/.claude"
+  cd "$WORKDIR-other/project"
+  HOME="$WORKDIR" "$REVIVE" mark-compact
+  run cat "$WORKDIR/.context-revive/hook.log"
+  [[ "$output" == *"signal written"* ]] || { rm -rf "$WORKDIR-other"; return 1; }
+  # The log line must NOT contain the spliced `~-other` artefact.
+  [[ "$output" != *"~-other"* ]] || { rm -rf "$WORKDIR-other"; return 1; }
+  rm -rf "$WORKDIR-other"
+}
