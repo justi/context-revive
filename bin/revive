@@ -1253,31 +1253,54 @@ cmd_doctor() {
   # When jq is available we structurally validate; without jq we fall back
   # to grep on the literal `"command": "... <pattern>"` string — weaker,
   # but `install-hook`'s manual-fallback path produces exactly that shape.
+  # Optional 3rd arg: required `matcher` value (e.g. "clear" for
+  # SessionStart). When provided, the jq path verifies the hook entry
+  # carries that exact matcher — otherwise a SessionStart{startup} or
+  # {resume} entry pointing at mark-clear would falsely pass. The grep
+  # fallback can't structurally tie matcher to command (they sit on
+  # separate JSON lines), so it stays command-only — accepted limitation
+  # for jq-less environments.
+  # jq exit codes: 0 = match, 1 = legitimate no-match, ≥2 = jq error
+  # (broken binary, malformed JSON). The grep fallback is for jq-error
+  # paths only — a legitimate "1" must NOT be overridden by grep, or a
+  # SessionStart{startup}+mark-clear setup would falsely pass when we're
+  # asking specifically for matcher=clear.
   _doctor_check_hook() {
-    local event="$1" pattern="$2"
-    local found=0 f
+    local event="$1" pattern="$2" matcher="${3:-}"
+    local label="$event${matcher:+($matcher)}"
+    local found=0 f jq_rc
     for f in ".claude/settings.json" "$HOME/.claude/settings.json"; do
       [[ -f "$f" ]] || continue
-      if command -v jq >/dev/null 2>&1 && \
-         jq -e --arg ev "$event" --arg pat "$pattern" \
-            '[.hooks[$ev][]?.hooks[]? | select(.command | test($pat))] | length > 0' \
-            "$f" >/dev/null 2>&1; then
-        :
-      elif grep -qE "\"command\"[[:space:]]*:[[:space:]]*\"[^\"]*${pattern}" "$f"; then
-        :
+      if command -v jq >/dev/null 2>&1; then
+        # `if jq ...; then` keeps `set -e` from aborting on a non-zero
+        # exit — we need to preserve the code (1 vs ≥2) to distinguish
+        # "no match" from "jq broke".
+        if jq -e --arg ev "$event" --arg pat "$pattern" --arg m "$matcher" \
+              '[.hooks[$ev][]? | select(((.matcher // "") == $m) and ((.hooks // []) | any(.command | test($pat))))] | length > 0' \
+              "$f" >/dev/null 2>&1
+        then jq_rc=0
+        else jq_rc=$?
+        fi
       else
-        continue
+        jq_rc=2
       fi
-      _doctor_ok "$event hook installed in $f"
+      case "$jq_rc" in
+        0) ;;                           # match
+        1) continue ;;                  # jq says no — trust it
+        *)                              # jq broke / absent: grep fallback
+          grep -qE "\"command\"[[:space:]]*:[[:space:]]*\"[^\"]*${pattern}" "$f" || continue
+          ;;
+      esac
+      _doctor_ok "$label hook installed in $f"
       found=1
     done
     if [[ "$found" == 0 ]]; then
-      _doctor_warn "no $event hook found — run \`revive install-hook\` (or \`--global\`)"
+      _doctor_warn "no $label hook found — run \`revive install-hook\` (or \`--global\`)"
     fi
   }
   _doctor_check_hook "UserPromptSubmit" "revive[[:space:]]+refresh"
   _doctor_check_hook "PostCompact"      "revive[[:space:]]+mark-compact"
-  _doctor_check_hook "SessionStart"     "revive[[:space:]]+mark-clear"
+  _doctor_check_hook "SessionStart"     "revive[[:space:]]+mark-clear"     "clear"
 
   # 7. hook log: present + sane size
   if [[ -f "$LOG_FILE" ]]; then

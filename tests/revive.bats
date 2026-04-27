@@ -1541,7 +1541,24 @@ JSON
 } }
 JSON
   run "$REVIVE" doctor
-  [[ "$output" == *"no SessionStart hook found"* ]] || return 1
+  [[ "$output" == *"no SessionStart(clear) hook found"* ]] || return 1
+}
+
+@test "doctor warns when SessionStart entry has wrong matcher (codex P3)" {
+  # mark-clear is wired, but matcher is "startup" instead of "clear" —
+  # /clear will never trigger this hook. doctor must surface the gap
+  # rather than silently passing on command match alone.
+  "$REVIVE" init
+  mkdir -p .claude
+  cat > .claude/settings.json <<'JSON'
+{ "hooks": {
+    "UserPromptSubmit": [ { "hooks": [ { "type": "command", "command": "revive refresh" } ] } ],
+    "PostCompact":      [ { "hooks": [ { "type": "command", "command": "revive mark-compact" } ] } ],
+    "SessionStart":     [ { "matcher": "startup", "hooks": [ { "type": "command", "command": "revive mark-clear" } ] } ]
+} }
+JSON
+  run "$REVIVE" doctor
+  [[ "$output" == *"no SessionStart(clear) hook found"* ]] || return 1
 }
 
 @test "doctor recognises all three hooks after a fresh install-hook" {
@@ -1551,5 +1568,5 @@ JSON
   [ "$status" -eq 0 ] || return 1
   [[ "$output" == *"UserPromptSubmit hook installed"* ]] || return 1
   [[ "$output" == *"PostCompact hook installed"* ]] || return 1
-  [[ "$output" == *"SessionStart hook installed"* ]] || return 1
+  [[ "$output" == *"SessionStart(clear) hook installed"* ]] || return 1
 }
