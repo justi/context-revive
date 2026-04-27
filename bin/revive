@@ -712,10 +712,29 @@ maybe_update_gitignore() {
   [[ -f .gitignore ]] || return 0
   git check-ignore -q "$STATIC_FILE" 2>/dev/null || return 0
 
+  # Best-effort: a read-only .gitignore must not abort `init`. Surface a
+  # warning with the exact lines the user needs to add, and continue.
+  if [[ ! -w .gitignore ]]; then
+    cat >&2 <<MSG
+warning: .gitignore is not writable — skipping auto-update. Add manually:
+  !.revive/
+  .revive/*
+  !.revive/static.md
+or run \`git add -f $STATIC_FILE\`.
+MSG
+    return 0
+  fi
+
+  # The block has to un-ignore the parent directory first: git semantics
+  # don't let \`!\` rescue a file inside a fully-ignored directory. Putting
+  # \`!.revive/\` first covers \`.revive/\`, \`.revive\`, and broad rules like
+  # \`.*\` / \`.*/\`. Then we re-ignore the directory contents and re-include
+  # only static.md.
   cat >> .gitignore <<'GITIGNORE'
 
 # revive: .revive/static.md is the curated STATIC layer (checked in);
 # other .revive/ contents are local runtime state.
+!.revive/
 .revive/*
 !.revive/static.md
 GITIGNORE
@@ -723,9 +742,8 @@ GITIGNORE
   if git check-ignore -q "$STATIC_FILE" 2>/dev/null; then
     cat >&2 <<MSG
 warning: $STATIC_FILE is still gitignored after appending the canonical
-exception. A directory-level rule (\`.revive/\` or \`.revive\`) earlier in
-.gitignore is likely blocking the un-ignore — replace it with
-\`.revive/*\` + \`!.revive/static.md\`, or run \`git add -f $STATIC_FILE\`.
+exception block. Inspect with \`git check-ignore -v $STATIC_FILE\` to see
+which rule is overriding, or run \`git add -f $STATIC_FILE\`.
 MSG
   else
     echo "updated: .gitignore (un-ignored $STATIC_FILE)"
