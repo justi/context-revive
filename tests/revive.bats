@@ -1344,3 +1344,72 @@ EOF
   run "$REVIVE" help
   [[ "$output" == *"doctor"* ]] || return 1
 }
+
+# --- post-compact trigger ---
+
+@test "mark-compact writes signal file in .claude/" {
+  mkdir -p .claude
+  run "$REVIVE" mark-compact
+  [ "$status" -eq 0 ] || return 1
+  [ -f .claude/revive-compact.signal ] || return 1
+}
+
+@test "mark-compact silently exits 0 when .claude/ cannot be created" {
+  # parent dir un-writable: hook must still succeed (silent-failure contract)
+  chmod -w .
+  run "$REVIVE" mark-compact
+  chmod +w .
+  [ "$status" -eq 0 ] || return 1
+}
+
+@test "refresh emits immediately when post-compact signal exists" {
+  # bump cadence so we'd normally skip — signal must override
+  mkdir -p .claude
+  : > .claude/revive-compact.signal
+  REVIVE_REFRESH_EVERY=999 REVIVE_REFRESH_TIME_GAP=99999 \
+    run "$REVIVE" refresh
+  [ "$status" -eq 0 ] || return 1
+  [[ "$output" == *"<revive refresh="* ]] || return 1
+}
+
+@test "refresh removes the signal after consuming it" {
+  mkdir -p .claude
+  : > .claude/revive-compact.signal
+  "$REVIVE" refresh >/dev/null
+  [ ! -f .claude/revive-compact.signal ] || return 1
+}
+
+@test "post-compact emit advances the cadence counter" {
+  # signal forces emit; counter must still tick so subsequent calls behave normally
+  mkdir -p .claude
+  : > .claude/revive-compact.signal
+  "$REVIVE" refresh >/dev/null
+  [ -f .claude/revive-counter ] || return 1
+  run cat .claude/revive-counter
+  [[ "$output" == 1:* ]] || return 1
+}
+
+@test "install-hook adds PostCompact entry alongside UserPromptSubmit" {
+  "$REVIVE" install-hook
+  run cat .claude/settings.json
+  [[ "$output" == *"UserPromptSubmit"* ]] || return 1
+  [[ "$output" == *"PostCompact"* ]] || return 1
+  [[ "$output" == *"revive refresh"* ]] || return 1
+  [[ "$output" == *"revive mark-compact"* ]] || return 1
+}
+
+@test "install-hook is idempotent for both hooks" {
+  "$REVIVE" install-hook
+  "$REVIVE" install-hook
+  # exactly one of each, even after a second install
+  local rc cc
+  rc=$(grep -c 'revive refresh' .claude/settings.json)
+  cc=$(grep -c 'revive mark-compact' .claude/settings.json)
+  [ "$rc" -eq 1 ] || return 1
+  [ "$cc" -eq 1 ] || return 1
+}
+
+@test "mark-compact appears in usage help" {
+  run "$REVIVE" help
+  [[ "$output" == *"mark-compact"* ]] || return 1
+}

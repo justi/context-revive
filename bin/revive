@@ -12,6 +12,7 @@ LOG_DIR="${HOME}/.context-revive"
 LOG_FILE="${LOG_DIR}/hook.log"
 
 COUNTER_FILE=".claude/revive-counter"
+COMPACT_SIGNAL=".claude/revive-compact.signal"
 REFRESH_EVERY="${REVIVE_REFRESH_EVERY:-5}"
 REFRESH_TIME_GAP="${REVIVE_REFRESH_TIME_GAP:-600}"  # seconds
 
@@ -34,8 +35,10 @@ Commands:
                     non-inferable facts the generation pass missed.
   show              Print the brief that would be injected (force-emit)
   refresh           Hook entry point — cadence-gated, silent on failure
-  install-hook      Wire UserPromptSubmit into .claude/settings.json
-                    (use --global for ~/.claude/settings.json)
+  mark-compact      PostCompact hook entry — drops a signal so the next
+                    refresh bypasses cadence and emits immediately
+  install-hook      Wire UserPromptSubmit + PostCompact into
+                    .claude/settings.json (use --global for ~/.claude/)
   doctor            Run sanity checks (git, .revive/static.md, hook,
                     log file). Exits non-zero if anything is broken.
   version           Print version
@@ -401,7 +404,15 @@ cadence_gate() {
   gap=$((now - last))
 
   local emit=0
-  if (( n == 1 )); then emit=1
+  # Post-compact override: a PostCompact hook drops a signal file when the
+  # user (or AutoCompact) just compacted the session. The agent has lost
+  # most of its context — that's exactly when re-injecting the brief gives
+  # the highest ROI, so bypass cadence and emit immediately.
+  if [[ -f "$COMPACT_SIGNAL" ]]; then
+    rm -f "$COMPACT_SIGNAL" 2>/dev/null || true
+    log "post-compact: forcing emit (counter=$n)"
+    emit=1
+  elif (( n == 1 )); then emit=1
   elif (( n % REFRESH_EVERY == 0 )); then emit=1
   elif (( gap > REFRESH_TIME_GAP )); then emit=1
   fi
@@ -424,6 +435,16 @@ cmd_show() {
   printf '%s\n' "$brief"
   local len=${#brief}
   printf '\n--- %d chars (budget: %d) ---\n' "$len" "$BRIEF_CHAR_BUDGET" >&2
+}
+
+# PostCompact hook entry point: drop a signal file so the next refresh
+# bypasses cadence and emits immediately. Always exits 0 — like cmd_refresh,
+# this is on the hook hot path and must never break a Claude Code session.
+cmd_mark_compact() {
+  mkdir -p "$(dirname "$COMPACT_SIGNAL")" 2>/dev/null || return 0
+  date +%s > "$COMPACT_SIGNAL" 2>/dev/null || return 0
+  log "post-compact signal written: $COMPACT_SIGNAL"
+  return 0
 }
 
 # refresh is the hook hot path: NEVER fail the session, always exit 0
@@ -1058,7 +1079,8 @@ cmd_install_hook() {
 
   local revive_bin
   revive_bin=$(command -v revive 2>/dev/null || echo "$HOME/.local/bin/revive")
-  local cmd_line="$revive_bin refresh"
+  local refresh_cmd="$revive_bin refresh"
+  local compact_cmd="$revive_bin mark-compact"
 
   mkdir -p "$(dirname "$settings_path")"
   [[ -f "$settings_path" ]] || echo '{}' > "$settings_path"
@@ -1070,11 +1092,10 @@ jq not found. Merge this into $settings_path manually:
 {
   "hooks": {
     "UserPromptSubmit": [
-      {
-        "hooks": [
-          { "type": "command", "command": "$cmd_line" }
-        ]
-      }
+      { "hooks": [ { "type": "command", "command": "$refresh_cmd" } ] }
+    ],
+    "PostCompact": [
+      { "hooks": [ { "type": "command", "command": "$compact_cmd" } ] }
     ]
   }
 }
@@ -1082,22 +1103,27 @@ EOF
     exit 1
   fi
 
-  if jq -e --arg cmd "$cmd_line" \
-    '[.hooks.UserPromptSubmit[]?.hooks[]? | select(.command == $cmd)] | length > 0' \
-    "$settings_path" >/dev/null 2>&1; then
-    echo "hook already installed in $settings_path"
-    return 0
-  fi
+  upsert() {
+    local event="$1" cmd="$2"
+    if jq -e --arg cmd "$cmd" --arg ev "$event" \
+         '[.hooks[$ev][]?.hooks[]? | select(.command == $cmd)] | length > 0' \
+         "$settings_path" >/dev/null 2>&1; then
+      echo "$event hook already installed in $settings_path"
+      return 0
+    fi
+    local tmp
+    tmp=$(mktemp)
+    jq --arg cmd "$cmd" --arg ev "$event" '
+      .hooks = (.hooks // {})
+      | .hooks[$ev] = (.hooks[$ev] // [])
+      | .hooks[$ev] += [{"hooks":[{"type":"command","command":$cmd}]}]
+    ' "$settings_path" > "$tmp"
+    mv "$tmp" "$settings_path"
+    echo "installed $event hook in $settings_path"
+  }
 
-  local tmp
-  tmp=$(mktemp)
-  jq --arg cmd "$cmd_line" '
-    .hooks = (.hooks // {})
-    | .hooks.UserPromptSubmit = (.hooks.UserPromptSubmit // [])
-    | .hooks.UserPromptSubmit += [{"hooks":[{"type":"command","command":$cmd}]}]
-  ' "$settings_path" > "$tmp"
-  mv "$tmp" "$settings_path"
-  echo "installed hook in $settings_path"
+  upsert "UserPromptSubmit" "$refresh_cmd"
+  upsert "PostCompact"      "$compact_cmd"
 }
 
 # --- doctor -----------------------------------------------------------------
@@ -1208,6 +1234,7 @@ main() {
     init)          cmd_init "$@" ;;
     show)          cmd_show "$@" ;;
     refresh)       cmd_refresh "$@" ;;
+    mark-compact)  cmd_mark_compact "$@" ;;
     suggest)       cmd_suggest "$@" ;;
     audit)         cmd_audit "$@" ;;
     install-hook)  cmd_install_hook "$@" ;;
