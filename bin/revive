@@ -53,7 +53,18 @@ cmd_version() { echo "revive $VERSION"; }
 
 log() {
   mkdir -p "$LOG_DIR" 2>/dev/null || return 0
-  printf '[%s] %s\n' "$(date '+%Y-%m-%dT%H:%M:%S')" "$*" \
+  # Tilde-substitute $HOME so multi-project logs stay scannable. Match
+  # only on a path boundary — `${PWD/#$HOME/~}` would happily rewrite
+  # `/Users/alice-work/project` to `~-work/project` when HOME is
+  # `/Users/alice` (codex P2). Use case to require either exact match
+  # or `$HOME/` prefix.
+  local cwd_short
+  case "$PWD" in
+    "$HOME")    cwd_short="~" ;;
+    "$HOME"/*)  cwd_short="~${PWD#"$HOME"}" ;;
+    *)          cwd_short="$PWD" ;;
+  esac
+  printf '[%s] [%s] %s\n' "$(date '+%Y-%m-%dT%H:%M:%S')" "$cwd_short" "$*" \
     >> "$LOG_FILE" 2>/dev/null || true
 }
 
@@ -411,8 +422,14 @@ cadence_gate() {
   # most of its context — that's exactly when re-injecting the brief gives
   # the highest ROI, so bypass cadence and emit immediately.
   if [[ -f "$COMPACT_SIGNAL" ]]; then
+    # The signal file payload identifies the trigger ("compact" / "clear").
+    # Sanitize to a-z only — defense-in-depth in case content was mangled.
+    # Empty or unknown content falls back to a neutral label.
+    local source
+    source=$(head -1 "$COMPACT_SIGNAL" 2>/dev/null | tr -cd '[:lower:]')
+    [[ "$source" == compact || "$source" == clear ]] || source="context-loss"
     rm -f "$COMPACT_SIGNAL" 2>/dev/null || true
-    log "post-compact: forcing emit (counter=$n)"
+    log "post-${source}: forcing emit (counter=$n)"
     emit=1
   elif (( n == 1 )); then emit=1
   elif (( n % REFRESH_EVERY == 0 )); then emit=1
@@ -446,14 +463,14 @@ cmd_show() {
 # path and must never break a Claude Code session.
 cmd_mark_compact() {
   mkdir -p "$(dirname "$COMPACT_SIGNAL")" 2>/dev/null || return 0
-  date +%s > "$COMPACT_SIGNAL" 2>/dev/null || return 0
+  printf 'compact\n' > "$COMPACT_SIGNAL" 2>/dev/null || return 0
   log "post-compact signal written: $COMPACT_SIGNAL"
   return 0
 }
 
 cmd_mark_clear() {
   mkdir -p "$(dirname "$COMPACT_SIGNAL")" 2>/dev/null || return 0
-  date +%s > "$COMPACT_SIGNAL" 2>/dev/null || return 0
+  printf 'clear\n' > "$COMPACT_SIGNAL" 2>/dev/null || return 0
   log "post-clear signal written: $COMPACT_SIGNAL"
   return 0
 }
