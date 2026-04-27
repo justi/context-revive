@@ -1370,10 +1370,12 @@ JSON
 }
 
 @test "mark-compact silently exits 0 when .claude/ cannot be created" {
-  # parent dir un-writable: hook must still succeed (silent-failure contract)
-  chmod -w .
+  # parent dir un-writable: hook must still succeed (silent-failure contract).
+  # Trap restores write perm even if an early assertion fails — without it
+  # a failed chmod -w would leak a read-only WORKDIR and break teardown.
+  trap 'chmod +w . || true' RETURN
+  chmod -w . || return 1
   run "$REVIVE" mark-compact
-  chmod +w .
   [ "$status" -eq 0 ] || return 1
 }
 
