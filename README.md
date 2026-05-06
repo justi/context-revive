@@ -32,52 +32,29 @@ once at session start and get summarized away by AutoCompact. This keeps
 your curated facts *fresh in the recent attention window*, complementary to
 them.
 
-## Example
+## Example — when your agent forgets what you told it
 
-After `revive init` + `revive suggest` on a repo with a handful of ADRs and
-a detailed `CLAUDE.md`, Claude Code's `UserPromptSubmit` hook receives a
-block like this on every 5th prompt (generic illustration — your content
-and numbers will differ):
+30 prompts in. AutoCompact fires. You ask the agent to rewrite the hot
+path in Python because parsing JSON in bash is painful. It says yes —
+forgetting you spent 20 prompts deciding *bash-only, single file*.
+
+With revive, the `PostCompact` hook just refreshed this into the recent
+attention window (real `.revive/static.md` from this repo, trimmed):
 
 ```
-<revive refresh="7">
-# STATIC  (from .revive/static.md — human-curated, stable across refreshes)
-PURPOSE: Background-job scheduler for small Go services. Success metric is
-zero surprise job failures after a deploy — goal: replace ops-managed cron
-with code-defined schedules that survive rollouts. Constraint: job state
-lives in the app's own Postgres; no new infrastructure.
-
-DIFFERENTIATORS:
-  - Traditional cron → schedules defined in code, survive deploys
-  - Managed SaaS schedulers → zero new infrastructure; reuses app Postgres
-  - Temporal / DAG workflow engines → single-step jobs only; keep it small
-
+PURPOSE: Bash CLI that injects a deterministic project brief into Claude
+Code on a cadence. Constraint: zero LLM calls, <100 ms hot path,
+single bash file — `git` required, `jq` optional.
 INVARIANTS:
-  - Every schedule change ships with a migration; never edit rows in prod.
-  - Jobs must be idempotent — retries on deploy-overlap are expected.
-  - Worker binary must not grow past 30 MB (embedded-device deploy target).
-
-GOTCHAS:
-  - `make test` runs integration against a real Postgres — set TEST_DATABASE_URL.
-  - `bin/deploy` always runs `schedule:apply` last; reordering breaks overlap detection.
-
-# DYNAMIC  (regenerated per refresh from git + fs)
-STATE: branch=main
-  9e8a1f2 fix(scheduler): handle DST transitions in cron parser
-      ↪ Cron parser was skipping jobs during spring-forward. Added unit tests for …
-  c4b2d30 feat: add schedule:diff command for deploy previews
-
-HOT_FILES: (last 20 commits, last change shown)
-  12× internal/scheduler/parser.go  ↪ "fix(scheduler): handle DST transitions in cron parser"
-   8× cmd/worker/main.go            ↪ "feat: add schedule:diff command for deploy previews"
-   5× internal/db/schema.sql        ↪ "chore: add index on next_run_at"
-</revive>
+  - Bash + git only on hot path. `jq` is the sole optional dep.
+    Push back on anything new.
 ```
 
-Ask this Claude Code *"what's the success metric for this project?"* — the
-agent answers *"zero surprise job failures after a deploy"* straight from
-the brief, not by re-reading files. 30 prompts in, 100 prompts in, the
-answer stays.
+So the agent pushes back: *"Python breaks the hot-path constraint —
+single bash file, `jq` is the only optional dep. Hard no unless we're
+rewriting the thesis."*
+
+The decision you made 30 prompts ago is still load-bearing.
 
 ## Quick start
 
