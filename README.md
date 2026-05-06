@@ -2,35 +2,9 @@
 
 > Your agent forgot the ADR you wrote 30 prompts ago.
 
-**Re-inject a dense, deterministic project brief into Claude Code every few
-prompts, before context rot degrades the agent.** You edit `.revive/static.md`
-once (or let an LLM draft it from your ADRs); the brief auto-refreshes on a
-cadence, wired through the `UserPromptSubmit` hook.
-
-One bash script, zero runtime on the hot path. Works with any agent via paste
-(`revive show | pbcopy`); Claude Code gets first-class hook integration.
-
-## Install
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/justi/context-revive/main/install.sh | bash
-```
-
-Requires `bash` + `git`. Optional: `jq` (for `install-hook`), `gh` (for
-best-quality PURPOSE auto-detection).
-
-## Do I need this?
-
-Use this if you keep hitting the same failure in Claude Code: 30 prompts in,
-the agent forgets an ADR, re-suggests an approach you already rejected, or
-asks questions `CLAUDE.md` already answered. You probably don't need it if
-your sessions are short (<15 prompts), CLAUDE.md stays under 1k tokens, or
-you already restart sessions frequently.
-
-Not a replacement for `CLAUDE.md`, Cursor Rules, or `AGENTS.md` — those load
-once at session start and get summarized away by AutoCompact. This keeps
-your curated facts *fresh in the recent attention window*, complementary to
-them.
+A bash CLI that re-injects your curated project brief into Claude Code on a
+cadence — fights context rot before AutoCompact summarizes your decisions
+away.
 
 ## Example — when your agent forgets what you told it
 
@@ -55,6 +29,31 @@ single bash file, `jq` is the only optional dep. Hard no unless we're
 rewriting the thesis."*
 
 The decision you made 30 prompts ago is still load-bearing.
+
+## Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/justi/context-revive/main/install.sh | bash
+```
+
+Requires `bash` + `git`. Optional: `jq` (for `install-hook`), `gh` (for
+best-quality PURPOSE auto-detection).
+
+## Do I need this?
+
+Use this if you keep hitting the same failure in Claude Code: 30 prompts in,
+the agent forgets an ADR, re-suggests an approach you already rejected, or
+asks questions `CLAUDE.md` already answered. You probably don't need it if
+your sessions are short (<15 prompts), CLAUDE.md stays under 1k tokens, or
+you already restart sessions frequently.
+
+Not a replacement for `CLAUDE.md`, Cursor Rules, or `AGENTS.md` — those load
+once at session start and get summarized away by AutoCompact. This keeps
+your curated facts *fresh in the recent attention window*, complementary to
+them.
+
+One bash script, zero runtime on the hot path. Works with any agent via paste
+(`revive show | pbcopy`); Claude Code gets first-class hook integration.
 
 ## Quick start
 
