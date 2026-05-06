@@ -8,25 +8,28 @@ away.
 
 ## Example — when your agent forgets what you told it
 
-30 prompts in. AutoCompact fires. You ask the agent to rewrite the hot
-path in Python because parsing JSON in bash is painful. It says yes —
-forgetting you spent 20 prompts deciding *bash-only, single file*.
+30 prompts in. AutoCompact fires. Background jobs feel slow, so you ask
+the agent: *"can we add Redis + Sidekiq for the queue?"* It says yes —
+forgetting you spent an entire ADR deciding *Postgres-backed jobs only,
+no new infrastructure*.
 
-With revive, the `PostCompact` hook just refreshed this into the recent
-attention window (real `.revive/static.md` from this repo, trimmed):
+With revive, the `PostCompact` hook just refreshed your project's
+`.revive/static.md` into the recent attention window:
 
 ```
-PURPOSE: Bash CLI that injects a deterministic project brief into Claude
-Code on a cadence. Constraint: zero LLM calls, <100 ms hot path,
-single bash file — `git` required, `jq` optional.
+PURPOSE: Internal billing service for a 12-person team. Goal: ship
+features without growing the on-call surface — the team has no DevOps.
+Constraint: Postgres is the only datastore; no Redis, no Kafka, no
+new infra without exec sign-off.
 INVARIANTS:
-  - Bash + git only on hot path. `jq` is the sole optional dep.
-    Push back on anything new.
+  - Background jobs run on solid_queue (Postgres-backed). No Sidekiq,
+    no Redis queues. Decided in ADR-014.
 ```
 
-So the agent pushes back: *"Python breaks the hot-path constraint —
-single bash file, `jq` is the only optional dep. Hard no unless we're
-rewriting the thesis."*
+So the agent pushes back: *"Sidekiq + Redis violates ADR-014 and the
+no-new-infra constraint. Want to revisit the ADR, or solve queue
+latency another way — raise solid_queue concurrency, partition the
+jobs table?"*
 
 The decision you made 30 prompts ago is still load-bearing.
 
